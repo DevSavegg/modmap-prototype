@@ -12,7 +12,11 @@ A clickable web prototype of MOD MAP, KMUTT's indoor and outdoor navigation app 
   - The "avoid sun and rain" route is a **labelled concept mock**: there is no covered-walkway data yet.
 - **Navigate** in one of two modes:
   - **Simulation:** the dot walks the route at ×1 to ×16 speed, so testers can sit and click through.
-  - **Real walk:** GPS outdoors. Indoors, the tester taps *next* at each step, because phones and browsers can't get a live indoor position.
+  - **Real walk:** GPS outdoors. Indoors, the **browser tracker** (`motion.js`) moves the dot by itself: steps from the accelerometer, turns from the gyroscope.
+    - **It is route-constrained,** a first version of the architecture's position tracker. The dot moves along the planned route, and a detected turn snaps it to the route's nearest corner.
+    - **Browsers have no barometer,** so the floor is a tap ("ถึงชั้น 6 แล้ว").
+    - **"ถัดไป" stays as a manual correction.** If the phone gives no motion data, it is the method.
+    - **Arrival:** when the tracker reaches the door, the app asks "ถึงแล้วใช่ไหม?". The tester can also tap "ฉันถึงหน้าห้องแล้ว" at any time. Either answer is the ground truth for the tracker's error.
 - **Recover a lost position** by photographing the nearest room sign. The app finds the room code and re-plans from that door. Two OCR layers run on the phone:
   1. **Tesseract.js 5.1.1:** Latin letters and digits, tried on the photo as taken and inverted.
   2. **[OpenThai2.0-OCR-Text](https://huggingface.co/iapp/OpenThai2.0-OCR-Text)** (iApp, Apache-2.0, about 4 MB): runs only when Tesseract finds no room code. It is ported to the browser in `openthai.js` with onnxruntime-web: detector, line boxes, then the CTC recognizer. Unlike the original runtime, its line boxes are axis-aligned.
@@ -21,13 +25,33 @@ A clickable web prototype of MOD MAP, KMUTT's indoor and outdoor navigation app 
 
   Each attempt is logged on the phone: what each engine read, and which room it matched. Open the log from the welcome screen ("บันทึกการอ่านป้าย"). Use it to measure the hit rate on real N7 sign photos.
 
-The welcome screen has three test scenarios. They are listed in `SCENARIOS` at the top of `app.js`; edit the text there. Paste the Google Form link into `FEEDBACK_URL` in the same place to show the feedback button.
+  After a sign is read, the tester confirms the room ("อ่านป้ายได้ว่า SCL608 ถูกต้องไหม?"), so a misread never moves the dot and every attempt has a right/wrong label.
+- **Measure their step length:** a 1-minute calibration walk on N7 floor 6, from the corridor at the central lift lobby to the west stair door (53.2 m). The result is used for the tester's later navigation.
+
+The welcome screen has three test scenarios. They are listed in `SCENARIOS` at the top of `app.js`; edit the text there. Settings the team changes (the Google Form link, the test-data address) are in `config.js`.
+
+## Test data (labelled `web`)
+
+- **Consent first:** the first screen asks for consent, a tester code (generated, editable) and an optional height (which predicts step length). Without consent the app works but logs nothing.
+- **What a run is:** one scenario, one free navigation or one calibration walk. Each finished run is saved in the phone's outbox (IndexedDB), then sent to the team's Google Apps Script (`TESTLOG_URL` in `config.js`; deploy steps in [tools/apps-script/README.md](tools/apps-script/README.md)).
+- **If sending fails:** runs stay in the outbox and are retried when the app opens or goes online. "ส่งไฟล์ข้อมูลการทดสอบที่ค้างอยู่" on the welcome screen shares them as a file.
+- **What's logged:**
+  - the phone and browser census: OS, browser, motion rate, gyroscope yes/no, motion permission;
+  - screens, searches, taps and task times;
+  - GPS fixes outdoors, plus steps against GPS distance (step-length calibration);
+  - raw accelerometer and gyroscope during real walks, plus steps and turns;
+  - lift taps, arrival answers, corrections, and the tracker's error at the door;
+  - sign-reading results with the tester's yes/no;
+  - sign photos only if the tester ticked the box.
+- **Kept apart:** it is all browser data (about 60 Hz, no barometer), so it is stored separately from Sensor Logger and native-app data and never mixed into Gates P and G.
+- **Never in this public repo.**
 
 ## Limitations (on purpose, for a one-day prototype)
 
 - **Floors:** they are schematic. Room boxes, the corridor and door positions come from our data, but no walls traced from the blueprints are published.
 - **Indoor coverage:** only N7 floors 2 and 6 have floor plans. Other rooms route to their building's entrance and then name the floor.
-- **Entrances:** each one is the nearest campus path to the building outline. The N7 entrance is approximate.
+- **Entrances:** each one is the nearest campus path to the building outline, except N7's, which the team marked on site (south side).
+- **The browser tracker** assumes the tester follows the route; it is not yet the full particle filter. Its step and turn thresholds are untested on real phones.
 - **Ground floor:** N7 floor 1 isn't converted yet, so the route says "take the lift" at the entrance.
 - **First OCR use:** it needs internet once, to download the OCR engine (a few MB) from jsDelivr.
 

@@ -6,7 +6,9 @@
    Data: data/*.json, built by tools/build_data.py. Campus map © OpenStreetMap contributors (ODbL). */
 
 // ---------- settings
-const FEEDBACK_URL = '';                 // Google Form link for testers: paste it here
+const FEEDBACK_URL = (window.MM_CONFIG && window.MM_CONFIG.FEEDBACK_URL) || '';   // set in config.js
+const CAL_DIST = 53.2;                    // m: floor 6, corridor at the central lift lobby (x 63.0) to the west stair door (x 9.8)
+const DEFAULT_STEP = 0.68;               // m: step length when nothing better is known (0.415 × 1.65 m)
 const WALK = 1.25;                       // m/s, walking speed used for time estimates
 const LIFT_S = 60;                       // s added for the lift ride
 const ENTRANCE_R = 15;                   // m: a GPS fix this close to the entrance counts as arrived outdoors
@@ -300,8 +302,9 @@ function fitFloor(fl) {
 }
 
 // ---------- screens
-const SCREENS = ['home', 'list', 'place', 'preview', 'loading', 'nav', 'welcome'];
+const SCREENS = ['home', 'list', 'place', 'preview', 'loading', 'nav', 'welcome', 'calib'];
 function show(name) {
+  TestLog.event('screen', { name });
   for (const s of SCREENS) $(`#${s}`).hidden = s !== name;
   if (name !== 'nav') { $('#arrived').hidden = true; }
   $('#dim').hidden = true;
@@ -393,6 +396,8 @@ function renderResults(rows, icon) {
   }
 }
 function choose(p) {
+  const typed = S.listMode === 'pick' ? (S.pickField === 'from' ? $('#pick-from').value : $('#pick-to').value) : $('#q').value;
+  TestLog.event('choose', { list: S.listMode, typed: String(typed || '').slice(0, 60), picked: p.id });
   pushRecent(p);
   if (S.listMode === 'pick') {
     if (S.pickField === 'from') { S.origin = { type: 'place', p }; $('#pick-from').value = titleOf(p); S.pickField = 'to'; $('#pick-to').focus(); renderPick(); return; }
@@ -606,15 +611,35 @@ function stepIcon(icon) {
 }
 
 // ---------- navigation
-const NAV = { r: null, phase: 'out', s: 0, playing: true, speed: 8, timer: 0, watch: null, lost: false, lostDone: false, offSince: 0 };
+const NAV = { r: null, phase: 'out', s: 0, playing: true, speed: 8, timer: 0, watch: null, lost: false, lostDone: false, offSince: 0, trk: null };
+function newTracker() {
+  // the browser tracker (real walk mode): steps move the dot along the planned indoor route; turns snap it to the route's corners
+  return { on: S.mode === 'real' && Motion.running(), L: DEFAULT_STEP, Lsrc: 'default', Lgps: null, gps0: null,
+           outSteps: 0, inSteps: 0, segSteps: 0, sRaw: 0, lastReset: 0, arrPrompted: false };
+}
+function chooseStepLength(T) {
+  const prof = TestLog.stepLength(), h = TestLog.height();
+  if (prof) return [prof, 'calibration walk'];
+  if (T.Lgps) return [T.Lgps, 'GPS walk'];
+  if (h) return [Math.min(0.9, Math.max(0.5, (0.415 * h) / 100)), 'height'];
+  return [DEFAULT_STEP, 'default'];
+}
 function startLoading(then) {
   show('loading');
   setTimeout(then, 1100);
 }
+function routeInfo(r) {
+  return { dest: r.dest.id, dest_code: r.dest.code, kind: r.kind, out_m: Math.round(r.out.len), in_m: r.inn ? +r.inn.len.toFixed(1) : null,
+           floor: r.inn ? r.inn.floor : null, origin: r.originLabel, steps: r.steps.map((x) => `${x.phase}:${x.icon}:${Math.round(x.len)}`).join(' ') };
+}
 function startNav(route) {
   stopNav();
+  if (!TestLog.active()) TestLog.startRun({ kind: 'free', mode: S.mode });
   Object.assign(NAV, { r: route, s: 0, lost: false, lostDone: false, offSince: 0, playing: true });
   NAV.phase = route.out.len > 3 ? 'out' : route.inn ? 'lift' : 'done';
+  if (S.mode === 'real') { Motion.start(); TestLog.recStart(); }
+  NAV.trk = newTracker();
+  TestLog.event('nav_start', { mode: S.mode, tracker: NAV.trk.on, motion: Motion.permission(), ...routeInfo(route) });
   show('nav');
   $('#simbadge').hidden = $('#simctl').hidden = S.mode !== 'sim';
   $('#sim-play').textContent = '❚❚'; $('#sim-speed').textContent = `×${NAV.speed}`;
@@ -646,6 +671,8 @@ function stopNav() {
   clearInterval(NAV.timer); NAV.timer = 0;
   if (NAV.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(NAV.watch);
   NAV.watch = null;
+  $('#arrivecard').hidden = true; $('#atdoor').hidden = true; $('#trackbadge').hidden = true;
+  if (!CAL.on) Motion.stop();
 }
 function advance(ds) {
   NAV.s += ds;
@@ -659,6 +686,13 @@ function advance(ds) {
   render();
 }
 function enterLift() {
+  const T = NAV.trk;
+  if (T && T.gps0) {                         // step length from the outdoor walk: GPS distance along the path ÷ steps
+    const dist = NAV.s - T.gps0.s, n = T.outSteps - T.gps0.steps, Lg = n ? dist / n : 0;
+    TestLog.event('gps_calibration', { dist_m: +dist.toFixed(1), steps: n, L: +Lg.toFixed(3) });
+    if (dist >= 60 && n >= 50 && Lg >= 0.45 && Lg <= 0.95) T.Lgps = Lg;
+  }
+  if (T) { [T.L, T.Lsrc] = chooseStepLength(T); TestLog.event('step_length', { L: +T.L.toFixed(3), source: T.Lsrc }); }
   NAV.phase = 'lift'; NAV.s = 0;
   drawIndoorRoute(); showMap('floor');
   const start = NAV.r.inn.pts[0];
@@ -666,17 +700,77 @@ function enterLift() {
   const fl = NAV.r.inn.floor;
   $('#lift-text').textContent = `ออกจากลิฟต์ที่ชั้น ${fl} แล้วหรือยัง?`;
   $('#lift-ok').textContent = `ถึงชั้น ${fl} แล้ว`;
+  $('#lift-in').hidden = S.mode !== 'real';
   $('#liftcard').hidden = false;
+  TestLog.event('lift_card', { floor: fl });
   render();
 }
 function liftDone() {
   $('#liftcard').hidden = true;
-  NAV.phase = 'in'; NAV.s = 0; render();
+  TestLog.event('lift_exit', { floor: NAV.r.inn.floor });
+  NAV.phase = 'in'; NAV.s = 0;
+  const T = NAV.trk;
+  if (T) Object.assign(T, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false });
+  render();
+}
+// ---- the browser tracker
+function onStep(ev) {
+  if (CAL.on) { calStep(); return; }
+  const T = NAV.trk;
+  if (!NAV.r || !T || S.mode !== 'real') return;
+  if (NAV.phase === 'out') { T.outSteps++; return; }
+  if (NAV.phase !== 'in' || NAV.lost) return;
+  T.inSteps++; T.segSteps++;
+  T.sRaw += T.L;
+  const end = NAV.r.inn.len;
+  NAV.s = Math.min(T.sRaw, end);
+  TestLog.event('step', { s: +T.sRaw.toFixed(2), peak: +ev.peak.toFixed(2) });
+  if (S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * end) { lose(); return; }
+  if (T.sRaw >= end - 1.0 && !T.arrPrompted) showArrivePrompt();
+  render();
+}
+function onTurn(ev) {
+  const T = NAV.trk;
+  if (!NAV.r || !T || S.mode !== 'real') return;
+  if (NAV.phase !== 'in' || NAV.lost) { TestLog.event('turn', { deg: Math.round(ev.deg), phase: NAV.phase }); return; }
+  const corners = NAV.r.steps.filter((x) => x.phase === 'in' && (x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn'));
+  const win = Math.max(5, 0.35 * (T.sRaw - T.lastReset));
+  let best = null;
+  for (const c of corners) { const d = Math.abs(c.s0 - T.sRaw); if (d <= win && (!best || d < Math.abs(best.s0 - T.sRaw))) best = c; }
+  const before = T.sRaw;
+  if (best && Math.abs(ev.deg) >= 50) { T.sRaw = best.s0 + 0.5; T.lastReset = T.sRaw; NAV.s = Math.min(T.sRaw, NAV.r.inn.len); }
+  TestLog.event('turn', { deg: Math.round(ev.deg), dur_ms: Math.round(ev.dur), s_before: +before.toFixed(2), snapped_to: best && Math.abs(ev.deg) >= 50 ? +best.s0.toFixed(2) : null });
+  render();
+}
+function doorSideText() {
+  const st = NAV.r.steps, a = st[st.length - 1];
+  return a && a.icon === 'arrive' ? a.sub || '' : '';
+}
+function showArrivePrompt() {
+  const T = NAV.trk; T.arrPrompted = true;
+  $('#arrive-text').textContent = `ถึง ${titleOf(NAV.r.dest)} แล้วใช่ไหม? ${doorSideText()}`.trim();
+  $('#arrivecard').hidden = false;
+  TestLog.event('arrive_prompt', { s: +T.sRaw.toFixed(2) });
+}
+function trueArrive(src) {
+  // the tester says they are at the destination door: the tracker's error there is the ground truth for the web tracker
+  const T = NAV.trk, end = NAV.r.inn ? NAV.r.inn.len : 0;
+  if (T && NAV.phase === 'in') {
+    const err = T.sRaw - end;
+    TestLog.event('true_arrival', { src, s: +T.sRaw.toFixed(2), route_m: +end.toFixed(2), err_m: +err.toFixed(2), seg_steps: T.segSteps, L: +T.L.toFixed(3) });
+    TestLog.summary({ arrival_err_m: +err.toFixed(2), seg_route_m: +end.toFixed(2), seg_steps: T.segSteps, in_steps: T.inSteps,
+                      step_len_used: +T.L.toFixed(3), step_len_source: T.Lsrc, step_len_from_route: T.segSteps ? +(end / T.segSteps).toFixed(3) : null,
+                      tracker: T.on });
+  }
+  $('#arrivecard').hidden = true; $('#atdoor').hidden = true;
+  NAV.s = end; arrive();
 }
 function arrive() {
   stopNav();
   NAV.phase = 'done';
   const p = NAV.r.dest;
+  TestLog.event('arrived', { dest: p.id });
+  TestLog.endRun('arrived');
   show('place');
   $('#arrived').hidden = false;
   $('#place-q').textContent = titleOf(p);
@@ -716,6 +810,10 @@ function render() {
   }
   $('#lostbtn').hidden = !(NAV.phase === 'in' && !NAV.lost);
   $('#instr-next').hidden = !(S.mode === 'real' && NAV.phase === 'in');
+  const realIn = S.mode === 'real' && NAV.phase === 'in' && !NAV.lost;
+  $('#atdoor').hidden = !realIn;
+  $('#trackbadge').hidden = !(realIn && NAV.trk && NAV.trk.on);
+  if (NAV.trk) $('#trk-steps').textContent = NAV.trk.segSteps;
   // instruction card
   let icon = step.icon, title = step.title, sub = '';
   if (NAV.phase === 'lift') { sub = 'เมื่อถึงชั้นแล้วกดปุ่ม "ถึงชั้นแล้ว"'; }
@@ -738,11 +836,14 @@ function render() {
   $('#nav-dist').textContent = $('#nav-dist2').textContent = fmtDist(rem);
   if (!$('#nav-steps').hidden) stepList($('#nav-steplist'), st, i);
 }
-function nextStepReal() {           // real walk indoors: the user taps "next" as they pass each step
-  const st = NAV.r.steps, i = curStepIndex();
+function nextStepReal() {           // real walk indoors: "next" = the tester's own correction (or the whole method if motion is off)
+  const st = NAV.r.steps, i = curStepIndex(), T = NAV.trk;
   const nxt = st.slice(i + 1).find((x) => x.phase === 'in');
-  if (!nxt || nxt.icon === 'arrive') { NAV.s = NAV.r.inn.len; arrive(); return; }
-  NAV.s = nxt.s0 + 0.01; render();
+  TestLog.event('manual_next', { s_before: T ? +T.sRaw.toFixed(2) : +NAV.s.toFixed(2), to: nxt ? +nxt.s0.toFixed(2) : 'arrive' });
+  if (!nxt || nxt.icon === 'arrive') { trueArrive('next button'); return; }
+  NAV.s = nxt.s0 + 0.01;
+  if (T) { T.sRaw = NAV.s; T.lastReset = NAV.s; }
+  render();
 }
 
 // GPS (real walk mode)
@@ -755,6 +856,9 @@ function onFix(pos) {
   S.me = [pos.coords.latitude, pos.coords.longitude]; S.acc = pos.coords.accuracy;
   if (NAV.phase !== 'out') return;                     // indoors GPS is not used
   const pr = project(NAV.r.out, S.me);
+  TestLog.event('gps', { lat: +S.me[0].toFixed(6), lon: +S.me[1].toFixed(6), acc: Math.round(S.acc), s: +pr.s.toFixed(1), off: +pr.d.toFixed(1),
+                         steps: NAV.trk ? NAV.trk.outSteps : null });
+  if (NAV.trk && !NAV.trk.gps0 && S.acc < 30) NAV.trk.gps0 = { s: Math.max(NAV.s, Math.min(pr.s, NAV.s + 60)), steps: NAV.trk.outSteps };
   if (pr.d > OFFROUTE_M && S.acc < 40) {
     if (!NAV.offSince) NAV.offSince = Date.now();
     else if (Date.now() - NAV.offSince > OFFROUTE_S * 1000) { reroute(); return; }
@@ -766,6 +870,7 @@ function onFix(pos) {
 function reroute() {
   const r = planRoute(NAV.r.dest, NAV.r.kind);
   if (!r) return;
+  TestLog.event('reroute', { lat: +S.me[0].toFixed(6), lon: +S.me[1].toFixed(6) });
   toast('ออกนอกเส้นทาง กำลังหาเส้นทางใหม่');
   S.origin = { type: 'me' }; startNav(r);
 }
@@ -773,6 +878,8 @@ function reroute() {
 // ---------- lost position → photo of the nearest room sign → OCR
 function lose() {
   NAV.lost = true; NAV.lostDone = true;
+  TestLog.event('lost', { s: +NAV.s.toFixed(2), auto: !!(S.scenario && S.scenario.loseAt) });
+  $('#arrivecard').hidden = true;
   render(); $('#dim').hidden = false;
   dlgLost(false);
 }
@@ -798,6 +905,7 @@ function dlgLost(failed, why) {
 }
 function cancelLost() {
   closeDialog(); $('#dim').hidden = true;
+  TestLog.event('lost_cancel', {});
   NAV.lost = false; render();
   toast('ใช้ตำแหน่งล่าสุดต่อ อาจคลาดเคลื่อนได้');
 }
@@ -806,6 +914,7 @@ function typeRoom() {
   dialog({ ico: LOST_ICO, title: 'ห้องที่อยู่ใกล้ที่สุด', text: 'พิมพ์เลขห้องจากป้ายหน้าห้องที่คุณยืนอยู่', extra: [inp],
     buttons: [{ t: 'ยกเลิก', ghost: true, on: () => dlgLost(false) }, { t: 'ยืนยัน', on: () => {
       const room = matchSign(inp.value.toUpperCase(), NAV.r.inn.floor);
+      TestLog.event('typed_room', { text: inp.value.slice(0, 20), room: room ? room.code : null });
       if (room) recover(room, 'พิมพ์'); else dlgLost(true, 'ไม่พบห้องนี้บนชั้นนี้ ลองพิมพ์อีกครั้งหรือถ่ายรูปป้าย');
     } }] });
   setTimeout(() => inp.focus(), 50);
@@ -815,7 +924,13 @@ async function onPhoto(file) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    await readSign(img, img.naturalWidth, img.naturalHeight, url);
+    if (TestLog.on() && TestLog.tester().photos) {                  // a small copy of the sign photo, only with the tester's OK
+      const k = Math.min(1, 800 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      TestLog.addPhoto(c.toDataURL('image/jpeg', 0.7), 'sign photo');
+    }
+    await readSign(img, img.naturalWidth, img.naturalHeight, url, 'photo');
   } catch { dlgLost(true); }
 }
 function prep(img, w, h, invert) {
@@ -843,7 +958,7 @@ async function ocr(canvas) {
   const { data } = await ocrWorker.recognize(canvas);
   return data.text || '';
 }
-async function readSign(img, w, h, previewUrl) {
+async function readSign(img, w, h, previewUrl, src) {
   dialog({ ico: '<div class="ants"><img src="icons/ant4.svg" alt=""><img src="icons/ant3.svg" alt=""><img src="icons/ant2.svg" alt=""><img src="icons/ant1.svg" alt=""></div>',
     title: 'กำลังแทรกสัญญาณใหม่', text: 'กรุณารอสักครู่...', img: previewUrl });
   const fl = NAV.r.inn.floor;
@@ -868,9 +983,14 @@ async function readSign(img, w, h, previewUrl) {
   log.room = room ? room.code : null;
   const hist = store.get('mm_ocr_log', []); hist.unshift(log); store.set('mm_ocr_log', hist.slice(0, 30));
   console.info('[sign OCR]', log);
+  TestLog.event('ocr', { src, floor: fl, tesseract: log.tesseract.slice(0, 300), openthai: log.openthai.slice(0, 300), engine: log.engine, room: log.room, load_fail: loadFail });
   if (!room && loadFail === 2) { dlgLost(true, 'โหลดตัวอ่านป้ายไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตครั้งแรก) ลองพิมพ์เลขห้องแทน'); return; }
   if (room && room.floor !== fl) { dlgLost(true, `ป้ายนี้คือห้อง ${room.code} ซึ่งอยู่ชั้น ${room.floor} ไม่ใช่ชั้นที่คุณกำลังเดิน`); return; }
-  if (room && N7.floors[fl].doors[room.id]) recover(room, `ป้าย · ${log.engine}`); else dlgLost(true);
+  if (!(room && N7.floors[fl].doors[room.id])) { dlgLost(true); return; }
+  // the tester confirms what was read: ground truth for the OCR, and no wrong jump if it misread
+  dialog({ title: `อ่านป้ายได้ว่า ${room.code}`, text: 'ถูกต้องไหม?', img: previewUrl,
+    buttons: [{ t: 'ไม่ใช่ ถ่ายใหม่', ghost: true, on: () => { TestLog.event('ocr_confirm', { room: room.code, ok: false, engine: log.engine }); dlgLost(true, 'ถ่ายให้เห็นเลขห้องชัด ๆ แล้วลองอีกครั้ง'); } },
+              { t: 'ถูกต้อง', on: () => { TestLog.event('ocr_confirm', { room: room.code, ok: true, engine: log.engine }); recover(room, `ป้าย · ${log.engine}`); } }] });
 }
 function matchSign(text, floor) {         // room numbers on N7 signs: "SCL607", "N7-607", or just "607"
   const T = String(text).toUpperCase();
@@ -892,6 +1012,8 @@ function recover(room, how) {
   r.inn = inn;
   r.steps = r.steps.filter((x) => x.phase !== 'in').concat(inn.steps);
   NAV.lost = false; NAV.s = 0;
+  TestLog.event('recover', { room: room.code, how, door_x: door.x, new_in_m: +inn.len.toFixed(1) });
+  if (NAV.trk) Object.assign(NAV.trk, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false });
   drawIndoorRoute();
   render();
   toast(`พบตำแหน่งแล้ว: หน้าห้อง ${room.code} (จาก${how})`);
@@ -919,7 +1041,7 @@ async function sampleSign() {
   const d = g.getImageData(0, 0, 1000, 640), a = d.data;         // a little sensor noise
   for (let i = 0; i < a.length; i += 4) { const n = (Math.random() - 0.5) * 22; a[i] += n; a[i + 1] += n; a[i + 2] += n; }
   g.putImageData(d, 0, 0);
-  await readSign(c, c.width, c.height, c.toDataURL('image/jpeg', 0.8));
+  await readSign(c, c.width, c.height, c.toDataURL('image/jpeg', 0.8), 'sample sign');
 }
 
 // ---------- welcome, scenarios, modes
@@ -929,27 +1051,92 @@ function openWelcome() {
   SCENARIOS.forEach((sc) => {
     const li = document.createElement('li'), b = document.createElement('button');
     b.innerHTML = `<div class="t">${esc(sc.title)}</div><div class="s">${esc(sc.task)}</div>`;
-    b.addEventListener('click', () => runScenario(sc));
+    b.addEventListener('click', () => { if (S.mode === 'real') Motion.ensurePermission(); runScenario(sc); });
     li.appendChild(b); ol.appendChild(li);
   });
   for (const b of document.querySelectorAll('.modeswitch button')) b.classList.toggle('on', b.dataset.mode === S.mode);
   const fb = $('#feedback'); fb.hidden = !FEEDBACK_URL; if (FEEDBACK_URL) fb.href = FEEDBACK_URL;
+  $('#inapp').hidden = !/Line\/|FBAN|FBAV|Instagram/.test(navigator.userAgent);
+  renderTester();
+}
+function renderTester() {
+  const decided = TestLog.decided(), t = TestLog.tester();
+  $('#consent').hidden = decided; $('#wl-main').hidden = !decided; $('#testerline').hidden = !decided;
+  if (!decided) { if (!$('#c-code').value) $('#c-code').value = TestLog.newCode(); return; }
+  $('#t-code').textContent = t.consent ? t.code : 'ไม่บันทึกข้อมูล';
+  renderTesterStatus();
+}
+async function renderTesterStatus() {
+  const t = TestLog.tester(); if (!t || !t.consent) { $('#t-status').textContent = ''; $('#t-export').hidden = true; return; }
+  const c = await TestLog.counts(), L = TestLog.stepLength();
+  const parts = [];
+  if (L) parts.push(`ก้าว ${L.toFixed(2)} ม.`);
+  if (c.pending) parts.push(TestLog.endpoint() ? `รอส่ง ${c.pending} รายการ` : `เก็บในเครื่อง ${c.pending} รายการ`);
+  else if (c.unconfirmed) parts.push(`ส่งแล้ว (ยังไม่ยืนยัน ${c.unconfirmed})`);
+  else parts.push('ข้อมูลส่งครบแล้ว');
+  $('#t-status').textContent = parts.join(' · ');
+  $('#t-export').hidden = !c.total;
 }
 function startPointOf(code) {
   const b = BYID[code]; return b && b.entrance ? [...b.entrance] : null;
 }
 function runScenario(sc) {
   S.scenario = sc; S.origin = { type: 'me' }; S.place = null;
-  if (S.mode === 'sim') S.me = startPointOf(sc.start);
+  TestLog.startRun({ kind: 'scenario', scenario: SCENARIOS.indexOf(sc) + 1, title: sc.title, mode: S.mode });
+  const atN7 = sc.start === 'N7';          // the tester is already at N7: start from its entrance, no GPS needed
+  if (S.mode === 'sim' || atN7) S.me = startPointOf(sc.start);
   goHome();
   if (S.me) cmap.setView(S.me, 17.5, { animate: false });
-  if (S.mode === 'real') locateOnce();
+  if (S.mode === 'real' && !atN7) locateOnce();
 }
 function freeUse() {
   S.scenario = null; S.origin = { type: 'me' };
+  TestLog.startRun({ kind: 'free', mode: S.mode });
   if (S.mode === 'sim' && !S.me) S.me = startPointOf('N16');
   goHome();
   if (S.mode === 'real') locateOnce();
+}
+
+// ---------- calibration walk: N7 floor 6, from the corridor at the central lift lobby to the west stair door
+const CAL = { on: false, steps: 0, t0: 0 };
+function openCalib() {
+  show('calib');
+  $('#cal-steps').textContent = '0';
+  $('#cal-start').hidden = false; $('#cal-done').hidden = true;
+  $('#cal-msg').textContent = `ระยะทาง ${Math.round(CAL_DIST)} เมตร`;
+}
+function calStart() {
+  Motion.ensurePermission().then((p) => {
+    if (p === 'denied' || p === 'unsupported') { toast('เบราว์เซอร์นี้ไม่ให้ใช้เซนเซอร์การเคลื่อนไหว ลองเปิดใน Safari หรือ Chrome', 4000); return; }
+    TestLog.startRun({ kind: 'calibration', mode: 'real', distance_m: CAL_DIST, where: 'N7 floor 6: corridor at the central lift lobby to the west stair door' });
+    Motion.stop(); Motion.start(); TestLog.recStart();
+    Object.assign(CAL, { on: true, steps: 0, t0: Date.now() });
+    TestLog.event('cal_start', {});
+    $('#cal-steps').textContent = '0'; $('#cal-start').hidden = true; $('#cal-done').hidden = false;
+    $('#cal-msg').textContent = 'เดินด้วยความเร็วปกติ แล้วกด "ถึงแล้ว" เมื่ออยู่ตรงประตูบันได';
+  });
+}
+function calStep() {
+  CAL.steps++;
+  $('#cal-steps').textContent = CAL.steps;
+  TestLog.event('step', { n: CAL.steps });
+}
+function calDone() {
+  if (!CAL.on) return;
+  CAL.on = false; Motion.stop();
+  const secs = (Date.now() - CAL.t0) / 1000, n = CAL.steps, L = n ? CAL_DIST / n : 0;
+  const ok = n >= 30 && L >= 0.4 && L <= 1.0;
+  TestLog.event('cal_done', { steps: n, secs: +secs.toFixed(1), L: +L.toFixed(3), accepted: ok });
+  if (ok) TestLog.setStepLength(L, 'calibration walk');
+  TestLog.endRun('calibrated', { steps: n, secs: +secs.toFixed(1), step_len: +L.toFixed(3), accepted: ok });
+  $('#cal-done').hidden = true; $('#cal-start').hidden = false; $('#cal-start').textContent = 'เดินอีกครั้ง';
+  $('#cal-msg').textContent = ok
+    ? `ก้าวของคุณยาวประมาณ ${L.toFixed(2)} ม. (${n} ก้าว ใน ${Math.round(secs)} วินาที) ระบบจะใช้ค่านี้ตอนนำทาง`
+    : `นับได้ ${n} ก้าว ซึ่งผิดปกติ ลองเดินใหม่ โดยถือโทรศัพท์ไว้ข้างหน้าเหมือนตอนดูแผนที่`;
+}
+function calCancel() {
+  if (CAL.on) { CAL.on = false; Motion.stop(); TestLog.event('cal_cancel', { steps: CAL.steps }); TestLog.endRun('cancelled'); }
+  openWelcome();
 }
 function locateOnce() {
   if (!('geolocation' in navigator)) { toast('อุปกรณ์นี้ใช้ GPS ไม่ได้'); return; }
@@ -1001,6 +1188,7 @@ function wire() {
   });
   $('#btn-start').addEventListener('click', () => {
     if (offCampus()) { window.open(googleMapsLink(buildingOf(S.place)), '_blank', 'noopener'); return; }
+    if (S.mode === 'real') Motion.ensurePermission();               // inside the tap, so iPhone can ask
     S.origin = { type: 'me' }; S.routeKind = 'fast';
     const r = planRoute(S.place, 'fast');
     if (!r) { toast('หาเส้นทางไปที่นี่ไม่ได้'); return; }
@@ -1016,15 +1204,23 @@ function wire() {
   $('#pv-name').addEventListener('click', () => { $('#pv-steps').hidden = !$('#pv-steps').hidden; });
   $('#mode-fast').addEventListener('click', () => { S.routeKind = 'fast'; S.route = planRoute(S.place, 'fast'); renderPreview(); });
   $('#mode-shade').addEventListener('click', () => { S.routeKind = 'shade'; S.route = planRoute(S.place, 'shade'); renderPreview(); });
-  $('#pv-start').addEventListener('click', () => { const r = S.route; startLoading(() => startNav(r)); });
-  $('#nav-x').addEventListener('click', () => { stopNav(); NAV.r = null; S.place ? openPlace(S.place) : goHome(); });
+  $('#pv-start').addEventListener('click', () => { if (S.mode === 'real') Motion.ensurePermission(); const r = S.route; startLoading(() => startNav(r)); });
+  $('#nav-x').addEventListener('click', () => {
+    stopNav(); TestLog.event('nav_cancel', { phase: NAV.phase }); TestLog.endRun('cancelled');
+    NAV.r = null; S.place ? openPlace(S.place) : goHome();
+  });
   $('#nav-x2').addEventListener('click', () => $('#nav-x').click());
   $('#nav-expand').addEventListener('click', () => { $('#nav-steps').hidden = false; $('#navbar').hidden = true; render(); });
   $('#nav-steps').addEventListener('click', (e) => { if (e.target.classList.contains('grab')) { $('#nav-steps').hidden = true; $('#navbar').hidden = false; } });
   $('#sim-play').addEventListener('click', () => { NAV.playing = !NAV.playing; $('#sim-play').textContent = NAV.playing ? '❚❚' : '▶'; });
   $('#sim-speed').addEventListener('click', () => { const v = [1, 4, 8, 16]; NAV.speed = v[(v.indexOf(NAV.speed) + 1) % v.length]; $('#sim-speed').textContent = `×${NAV.speed}`; });
   $('#lift-ok').addEventListener('click', liftDone);
+  $('#lift-in').addEventListener('click', () => { TestLog.event('lift_in', {}); toast('บันทึกแล้ว กดอีกปุ่มเมื่อออกจากลิฟต์'); });
   $('#instr-next').addEventListener('click', nextStepReal);
+  $('#atdoor').addEventListener('click', () => trueArrive('at-door button'));
+  $('#arrive-yes').addEventListener('click', () => trueArrive('arrival prompt'));
+  $('#arrive-no').addEventListener('click', () => { $('#arrivecard').hidden = true; TestLog.event('arrive_prompt_no', { s: NAV.trk ? +NAV.trk.sRaw.toFixed(2) : null }); });
+  Motion.onStep = onStep; Motion.onTurn = onTurn;
   $('#lostbtn').addEventListener('click', lose);
   $('#cam').addEventListener('change', (e) => onPhoto(e.target.files[0]));
   $('#floorpill').addEventListener('click', () => {
@@ -1043,7 +1239,33 @@ function wire() {
   for (const b of document.querySelectorAll('.modeswitch button')) {
     b.addEventListener('click', () => { S.mode = b.dataset.mode; for (const x of document.querySelectorAll('.modeswitch button')) x.classList.toggle('on', x === b); });
   }
-  $('#free-use').addEventListener('click', freeUse);
+  $('#free-use').addEventListener('click', () => { if (S.mode === 'real') Motion.ensurePermission(); freeUse(); });
+  // test data: consent, tester code, calibration walk, file export
+  $('#c-yes').addEventListener('click', () => {
+    const pm = Motion.ensurePermission();                          // inside the tap: iPhone shows its motion prompt now
+    TestLog.decide({ consent: true, code: $('#c-code').value, height_cm: parseFloat($('#c-height').value), photos: $('#c-photos').checked });
+    renderTester();
+    pm.then(() => Motion.census()).then((c) => {
+      TestLog.setCensus(c);
+      if (c.motion_api && Motion.permission() === 'denied') toast('ไม่ได้รับอนุญาตให้ใช้เซนเซอร์ การนับก้าวจะใช้ไม่ได้ (ยังทดสอบส่วนอื่นได้)', 4500);
+    });
+  });
+  $('#c-no').addEventListener('click', () => { TestLog.decide({ consent: false }); renderTester(); });
+  $('#t-change').addEventListener('click', () => { TestLog.reset(); $('#c-code').value = TestLog.newCode(); $('#c-height').value = ''; $('#c-photos').checked = false; renderTester(); });
+  $('#t-export').addEventListener('click', async () => {
+    const r = await TestLog.exportFile();
+    toast(r === 'empty' ? 'ไม่มีข้อมูลค้างในเครื่อง' : r === 'shared' ? 'ส่งไฟล์แล้ว ขอบคุณครับ' : 'บันทึกไฟล์แล้ว ส่งไฟล์นี้ให้ทีมได้เลย', 3500);
+  });
+  TestLog.onChange(() => { if (!$('#welcome').hidden) renderTesterStatus(); });
+  $('#calib-open').addEventListener('click', openCalib);
+  $('#cal-start').addEventListener('click', calStart);
+  $('#cal-done').addEventListener('click', calDone);
+  $('#cal-cancel').addEventListener('click', calCancel);
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button, a');
+    if (b) TestLog.tap(b.id || b.dataset.mode || b.dataset.cat || 'other');
+  }, true);
+  window.addEventListener('pagehide', () => { if (TestLog.active()) TestLog.endRun('page closed'); });
   $('#ocr-log-btn').addEventListener('click', () => {
     const rows = store.get('mm_ocr_log', []);
     const ok = rows.filter((r) => r.room).length;
