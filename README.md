@@ -28,7 +28,7 @@ A clickable web prototype of MOD MAP, KMUTT's indoor and outdoor navigation app 
   After a sign is read, the tester confirms the room ("อ่านป้ายได้ว่า SCL608 ถูกต้องไหม?"), so a misread never moves the dot and every attempt has a right/wrong label.
 - **Measure their step length:** a 1-minute calibration walk on N7 floor 6, from the corridor at the central lift lobby to the west stair door (53.2 m). The result is used for the tester's later navigation.
 
-The welcome screen has three test scenarios. They are listed in `SCENARIOS` at the top of `app.js`; edit the text there. Settings the team changes (the Google Form link, the test-data address) are in `config.js`.
+The welcome screen has three test scenarios. They are listed in `SCENARIOS` at the top of `app.js`; edit the text there. Settings the team changes, such as the test-data address, are in `config.js`. Tester feedback is collected by interview, so there is no feedback form. Note each tester's code from the welcome screen with the interview notes, to match them to the logged runs.
 
 ## Test data (labelled `web`)
 
