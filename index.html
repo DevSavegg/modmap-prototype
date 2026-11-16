@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<meta name="theme-color" content="#fb8c3a">
+<title>MOD MAP Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600&family=Prompt:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <div id="cmap" class="map"></div>
+  <div id="fmap" class="map" hidden></div>
+  <div id="dim" hidden></div>
+
+  <!-- HOME -->
+  <section id="home" class="layer">
+    <button id="searchbar" class="searchbar" aria-label="ค้นหา">
+      <span class="ico-search"></span><span class="ph">ค้นหาสถานที่ อาคาร หรือห้อง...</span>
+    </button>
+    <div class="chips" id="chips">
+      <button data-cat="N"><span class="ico-bldg"></span>ตึก N</button>
+      <button data-cat="S"><span class="ico-bldg"></span>ตึก S</button>
+      <button data-cat="food"><span class="ico-food"></span>โรงอาหาร</button>
+      <button data-cat="dorm"><span class="ico-bldg"></span>หอพัก</button>
+    </div>
+    <button id="btn-help" class="fab fab-help" aria-label="สถานการณ์ทดสอบ">?</button>
+    <button id="btn-locate" class="fab fab-locate" aria-label="ตำแหน่งของฉัน"><span class="you-dot sm"></span></button>
+    <button id="btn-go" class="fab fab-go" aria-label="เริ่มนำทาง"><img src="icons/nav-arrow.svg" alt="" class="go-arrow"></button>
+  </section>
+
+  <!-- SEARCH / CATEGORY / PICKER (one full-screen list page) -->
+  <section id="list" class="page" hidden>
+    <div id="pickhead" class="pickhead" hidden>
+      <button class="back" id="pick-back" aria-label="กลับ">←</button>
+      <div class="pickfields">
+        <div class="pickrow"><span class="you-dot sm"></span><input id="pick-from" placeholder="ตำแหน่งของคุณ" autocomplete="off"></div>
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="pickrow"><img src="icons/pin.svg" alt="" class="pin-sm"><input id="pick-to" placeholder="เลือกจุดหมาย" autocomplete="off"></div>
+      </div>
+      <button class="swap" id="pick-swap" aria-label="สลับต้นทางและปลายทาง">⇅</button>
+    </div>
+    <div id="listhead" class="searchbar static">
+      <button class="back" id="list-back" aria-label="กลับ">←</button>
+      <input id="q" placeholder="ค้นหาสถานที่ อาคาร หรือห้อง..." autocomplete="off" enterkeyhint="search">
+      <button id="q-clear" class="clear" aria-label="ล้าง"><img src="icons/search-clear.svg" alt=""></button>
+    </div>
+    <div id="listtitle" class="listtitle" hidden></div>
+    <ul id="results" class="results"></ul>
+  </section>
+
+  <!-- PLACE SHEET -->
+  <section id="place" class="layer" hidden>
+    <button class="searchbar" id="place-bar"><span class="ico-search"></span><span class="ph" id="place-q"></span><img src="icons/search-x.svg" alt="" class="x30" id="place-x"></button>
+    <button id="btn-layers" class="layersbtn" aria-label="สลับแผนที่และแผนผังชั้น" hidden><img src="icons/layers-bg.svg" alt="" class="lbg"><img src="icons/layers.svg" alt="" class="lic"></button>
+    <div class="sheet" id="place-sheet">
+      <button class="sheet-close" id="place-close" aria-label="ปิด"><img src="icons/sheet-close.svg" alt=""></button>
+      <h2 id="place-title"></h2>
+      <p class="sub" id="place-sub"></p>
+      <div class="thumb" id="place-thumb"></div>
+      <p class="note" id="place-note" hidden></p>
+      <div class="btnrow" id="place-btns">
+        <button class="btn primary" id="btn-route"><img src="icons/route.svg" alt="">เส้นทาง</button>
+        <button class="btn soft" id="btn-start"><img src="icons/nav-arrow.svg" alt="">เริ่มนำทาง</button>
+      </div>
+      <button class="btn primary wide" id="btn-finish" hidden><img src="icons/pin.svg" alt="" class="pin-btn">เสร็จสิ้นการนำทาง</button>
+    </div>
+  </section>
+
+  <!-- ROUTE PREVIEW -->
+  <section id="preview" class="layer" hidden>
+    <div class="odcard">
+      <div class="odrow"><span class="you-dot sm"></span><span id="pv-from">ตำแหน่งของคุณ</span></div>
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div class="odrow"><img src="icons/pin.svg" alt="" class="pin-sm"><span id="pv-to"></span></div>
+      <button class="swap" id="pv-back" aria-label="กลับ">✕</button>
+    </div>
+    <div class="modebtns">
+      <button id="mode-fast" class="modebtn on" aria-label="เส้นทางที่ไวที่สุด"><svg viewBox="0 0 32 32"><path d="M18 3 7 18h8l-2 11 12-16h-8z" fill="currentColor"/></svg></button>
+      <button id="mode-shade" class="modebtn" aria-label="เส้นทางหลบแดดหลบฝน (แนวคิด)"><svg viewBox="0 0 32 32"><circle cx="11" cy="11" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 2v3M11 17v3M2 11h3M17 11h3M4.6 4.6l2 2M15.4 15.4l2 2M4.6 17.4l2-2M15.4 4.6l2 2" stroke="currentColor" stroke-width="2"/><path d="M12 27h13a5 5 0 0 0 0-10 7 7 0 0 0-13 2 4 4 0 0 0 0 8z" fill="currentColor"/></svg></button>
+    </div>
+    <div class="sheet tall" id="pv-sheet">
+      <div class="grab" id="pv-grab"></div>
+      <button class="sheet-close" id="pv-close" aria-label="ปิด"><img src="icons/close-sm.svg" alt=""></button>
+      <h2 id="pv-name">เส้นทางที่ไวที่สุด</h2>
+      <p class="mock" id="pv-mock" hidden>ตัวอย่างแนวคิด: ยังไม่ได้ใช้ข้อมูลทางเดินมีหลังคาจริง</p>
+      <div class="pvstats"><span id="pv-min"></span><span id="pv-dist"></span></div>
+      <div class="steps" id="pv-steps" hidden><h3>ขั้นตอน</h3><ul id="pv-steplist"></ul></div>
+      <button class="btn primary wide" id="pv-start"><img src="icons/nav-arrow-white.svg" alt="">เริ่มนำทาง</button>
+    </div>
+  </section>
+
+  <!-- LOADING -->
+  <section id="loading" class="page center" hidden>
+    <div class="ants"><img src="icons/ant4.svg" alt=""><img src="icons/ant3.svg" alt=""><img src="icons/ant2.svg" alt=""><img src="icons/ant1.svg" alt=""></div>
+    <p class="loadtxt">กำลังโหลดเส้นทาง...</p>
+  </section>
+
+  <!-- NAVIGATION -->
+  <section id="nav" class="layer" hidden>
+    <div class="instr" id="instr">
+      <img id="instr-ico" src="icons/step-straight.svg" alt="" class="instr-ico">
+      <div><div class="instr-t" id="instr-t">เดินตรง</div><div class="instr-s" id="instr-s"></div></div>
+      <button class="btn soft small" id="instr-next" hidden>ถัดไป</button>
+    </div>
+    <div class="liftcard" id="liftcard" hidden>
+      <p id="lift-text">ขึ้นลิฟต์ไปยังชั้น 6</p>
+      <button class="btn primary" id="lift-ok">ถึงชั้น 6 แล้ว</button>
+    </div>
+    <div class="badge" id="simbadge">โหมดจำลอง</div>
+    <div class="simctl" id="simctl">
+      <button id="sim-play" aria-label="หยุด/เล่น">❚❚</button>
+      <button id="sim-speed" aria-label="ความเร็ว">×8</button>
+    </div>
+    <button class="floorpill" id="floorpill" hidden><svg viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5zM2 12l10 5 10-5M2 16l10 5 10-5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span id="floorpill-t">ชั้น 6</span><span class="chev">⌄</span></button>
+    <div class="floormenu" id="floormenu" hidden></div>
+    <button class="lostbtn" id="lostbtn" hidden>หาตำแหน่งไม่เจอ?</button>
+    <div class="navbar" id="navbar">
+      <button class="xbtn" id="nav-x" aria-label="หยุดนำทาง">✕</button>
+      <div class="navstat"><b id="nav-min"></b><span id="nav-dist"></span></div>
+      <button class="expand" id="nav-expand" aria-label="ดูขั้นตอนทั้งหมด">⌃</button>
+    </div>
+    <div class="sheet tall" id="nav-steps" hidden>
+      <div class="grab"></div>
+      <div class="navsheethead"><button class="xbtn" id="nav-x2">✕</button><div class="navstat"><b id="nav-min2"></b><span id="nav-dist2"></span></div></div>
+      <div class="steps"><h3>ขั้นตอน</h3><ul id="nav-steplist"></ul></div>
+    </div>
+  </section>
+
+  <!-- ARRIVED -->
+  <div class="arrived" id="arrived" hidden><span class="arr-ico">✓</span>คุณมาถึงแล้ว</div>
+
+  <!-- WELCOME / SCENARIOS -->
+  <section id="welcome" class="page" hidden>
+    <div class="wl">
+      <p class="eyebrow">MOD MAP · ต้นแบบสำหรับทดสอบ</p>
+      <h1>เลือกสถานการณ์ทดสอบ</h1>
+      <div class="modeswitch" role="radiogroup" aria-label="รูปแบบการทดสอบ">
+        <button data-mode="sim" class="on" role="radio">จำลองการเดิน<small>นั่งทดสอบได้เลย</small></button>
+        <button data-mode="real" role="radio">เดินจริง (GPS)<small>เดินไปที่ N7</small></button>
+      </div>
+      <ol class="scenarios" id="scenarios"></ol>
+      <button class="btn soft wide" id="free-use">ลองใช้งานอิสระ</button>
+      <p class="fine">ต้นแบบนี้ใช้แผนผังชั้นแบบย่อของอาคาร N7 ชั้น 2 และ 6 · แผนที่ © OpenStreetMap contributors</p>
+      <a class="btn primary wide" id="feedback" target="_blank" rel="noopener" hidden>ให้ความคิดเห็น (แบบสอบถาม)</a>
+    </div>
+  </section>
+
+  <!-- DIALOG -->
+  <div class="dlgwrap" id="dlgwrap" hidden>
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
+      <div class="dlg-ico" id="dlg-ico"></div>
+      <h3 id="dlg-t"></h3>
+      <p id="dlg-p"></p>
+      <img id="dlg-img" alt="รูปที่ใช้หาตำแหน่ง" hidden>
+      <div class="dlg-extra" id="dlg-extra"></div>
+      <div class="dlg-btns" id="dlg-btns"></div>
+    </div>
+  </div>
+  <input type="file" id="cam" accept="image/*" capture="environment" hidden>
+  <div class="toast" id="toast" hidden></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
