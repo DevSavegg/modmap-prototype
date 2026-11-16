@@ -17,6 +17,7 @@ A clickable web prototype of MOD MAP, KMUTT's indoor and outdoor navigation app 
     - **Browsers have no barometer,** so the floor is a tap ("ถึงชั้น 6 แล้ว").
     - **"ถัดไป" stays as a manual correction.** If the phone gives no motion data, it is the method.
     - **Arrival:** when the tracker reaches the door, the app asks "ถึงแล้วใช่ไหม?". The tester can also tap "ฉันถึงหน้าห้องแล้ว" at any time. Either answer is the ground truth for the tracker's error.
+      - If a sign photo puts the tester at the destination door, the app asks at once. That arrival is logged, but not counted as a tracker error.
 - **Recover a lost position** by photographing the nearest room sign. The app finds the room code and re-plans from that door. Two OCR layers run on the phone:
   1. **Tesseract.js 5.1.1:** Latin letters and digits, tried on the photo as taken and inverted.
   2. **[OpenThai2.0-OCR-Text](https://huggingface.co/iapp/OpenThai2.0-OCR-Text)** (iApp, Apache-2.0, about 4 MB): runs only when Tesseract finds no room code. It is ported to the browser in `openthai.js` with onnxruntime-web: detector, line boxes, then the CTC recognizer. Unlike the original runtime, its line boxes are axis-aligned.
@@ -25,14 +26,14 @@ A clickable web prototype of MOD MAP, KMUTT's indoor and outdoor navigation app 
 
   Each attempt is logged on the phone: what each engine read, and which room it matched. Open the log from the welcome screen ("บันทึกการอ่านป้าย"). Use it to measure the hit rate on real N7 sign photos.
 
-  After a sign is read, the tester confirms the room ("อ่านป้ายได้ว่า SCL608 ถูกต้องไหม?"), so a misread never moves the dot and every attempt has a right/wrong label.
-- **Measure their step length:** a 1-minute calibration walk on N7 floor 6, from the corridor at the central lift lobby to the west stair door (53.2 m). The result is used for the tester's later navigation.
+  After a sign is read, the tester confirms the room ("อ่านป้ายได้ว่า SCL608 ถูกต้องไหม?"), so a misread never moves the dot and every attempt has a right/wrong label. If the photo shows several room numbers, such as a range sign reading "601-607", the tester picks the room they are standing at instead.
+- **Measure their step length:** a 1-minute calibration walk on N7 floor 6, from the corridor at the central lift lobby to the west stair door (53.2 m). The result is used for the tester's later navigation only if at least 60 steps were counted and the step length fits the tester's height: 0.33–0.48 × height, or 0.45–0.85 m when no height was given. Otherwise the app asks for the walk again.
 
 The welcome screen has three test scenarios. They are listed in `SCENARIOS` at the top of `app.js`; edit the text there. Settings the team changes, such as the test-data address, are in `config.js`. Tester feedback is collected by interview, so there is no feedback form. Note each tester's code from the welcome screen with the interview notes, to match them to the logged runs.
 
 ## Test data (labelled `web`)
 
-- **Notice first:** the first screen tells testers that anonymous usage data is collected (KMUTT needs no consent form for this project, 16 Nov). It shows a tester code (generated, editable) and asks for an optional height, which predicts step length. Testers who tap "ไม่ต้องการให้เก็บข้อมูล" can use the app with nothing logged.
+- **Notice first:** the first screen tells testers that anonymous usage data is collected (KMUTT needs no consent form for this project, 16 Nov). It shows a tester code (generated, editable) and asks for an optional height, which predicts step length. If the phone refuses the motion sensors, the app explains how to allow them and offers a retry. (iPhone Safari asks for them, and so does Chrome on Android from about version 157.) The welcome screen keeps a "เปิดเซนเซอร์" link until they are allowed. Testers who tap "ไม่ต้องการให้เก็บข้อมูล" can use the app with nothing logged.
 - **What a run is:** one scenario, one free navigation or one calibration walk. Each finished run is saved in the phone's outbox (IndexedDB), then sent to the team's Google Apps Script (`TESTLOG_URL` in `config.js`; deploy steps in [tools/apps-script/README.md](tools/apps-script/README.md)).
 - **If sending fails:** runs stay in the outbox and are retried when the app opens or goes online. "ส่งไฟล์ข้อมูลการทดสอบที่ค้างอยู่" on the welcome screen shares them as a file.
 - **What's logged:**
