@@ -846,16 +846,31 @@ async function ocr(canvas) {
 async function readSign(img, w, h, previewUrl) {
   dialog({ ico: '<div class="ants"><img src="icons/ant4.svg" alt=""><img src="icons/ant3.svg" alt=""><img src="icons/ant2.svg" alt=""><img src="icons/ant1.svg" alt=""></div>',
     title: 'กำลังแทรกสัญญาณใหม่', text: 'กรุณารอสักครู่...', img: previewUrl });
+  const fl = NAV.r.inn.floor;
+  const log = { at: new Date().toISOString(), floor: fl, tesseract: '', openthai: '', engine: null, room: null };
+  let room = null, loadFail = 0;
+  // layer 1: Tesseract (Latin letters and digits), normal then inverted
   try {
-    const fl = NAV.r.inn.floor;
-    let text = await ocr(prep(img, w, h, false));
-    let room = matchSign(text, fl);
-    if (!room) { text += '\n' + await ocr(prep(img, w, h, true)); room = matchSign(text, fl); }
-    if (room && room.floor !== fl) { dlgLost(true, `ป้ายนี้คือห้อง ${room.code} ซึ่งอยู่ชั้น ${room.floor} ไม่ใช่ชั้นที่คุณกำลังเดิน`); return; }
-    if (room && N7.floors[fl].doors[room.id]) recover(room, 'ป้าย'); else dlgLost(true);
-  } catch (e) {
-    dlgLost(true, 'โหลดตัวอ่านป้ายไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตครั้งแรก) ลองพิมพ์เลขห้องแทน');
+    log.tesseract = await ocr(prep(img, w, h, false));
+    room = matchSign(log.tesseract, fl);
+    if (!room) { log.tesseract += '\n' + await ocr(prep(img, w, h, true)); room = matchSign(log.tesseract, fl); }
+    if (room) log.engine = 'Tesseract';
+  } catch { loadFail++; }
+  // layer 2: OpenThai2.0-OCR-Text (Thai + English line OCR) when Tesseract found no room code
+  if (!room) {
+    try {
+      $('#dlg-p').textContent = 'ลองอ่านป้ายอีกวิธี...';
+      log.openthai = (await OpenThaiOCR.read(img, w, h)).text;
+      room = matchSign(log.openthai, fl);
+      if (room) log.engine = 'OpenThai';
+    } catch { loadFail++; }
   }
+  log.room = room ? room.code : null;
+  const hist = store.get('mm_ocr_log', []); hist.unshift(log); store.set('mm_ocr_log', hist.slice(0, 30));
+  console.info('[sign OCR]', log);
+  if (!room && loadFail === 2) { dlgLost(true, 'โหลดตัวอ่านป้ายไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตครั้งแรก) ลองพิมพ์เลขห้องแทน'); return; }
+  if (room && room.floor !== fl) { dlgLost(true, `ป้ายนี้คือห้อง ${room.code} ซึ่งอยู่ชั้น ${room.floor} ไม่ใช่ชั้นที่คุณกำลังเดิน`); return; }
+  if (room && N7.floors[fl].doors[room.id]) recover(room, `ป้าย · ${log.engine}`); else dlgLost(true);
 }
 function matchSign(text, floor) {         // room numbers on N7 signs: "SCL607", "N7-607", or just "607"
   const T = String(text).toUpperCase();
@@ -1029,6 +1044,15 @@ function wire() {
     b.addEventListener('click', () => { S.mode = b.dataset.mode; for (const x of document.querySelectorAll('.modeswitch button')) x.classList.toggle('on', x === b); });
   }
   $('#free-use').addEventListener('click', freeUse);
+  $('#ocr-log-btn').addEventListener('click', () => {
+    const rows = store.get('mm_ocr_log', []);
+    const ok = rows.filter((r) => r.room).length;
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'text-align:left;font-size:11px;max-height:46vh;overflow:auto;white-space:pre-wrap;margin:0';
+    pre.textContent = rows.map((r) => `${r.at.slice(5, 16).replace('T', ' ')}  ชั้น ${r.floor}  →  ${r.room || 'อ่านไม่ได้'}${r.engine ? ` (${r.engine})` : ''}`).join('\n') || 'ยังไม่มีการอ่านป้ายบนเครื่องนี้';
+    dialog({ title: 'บันทึกการอ่านป้าย', text: `อ่านสำเร็จ ${ok} จาก ${rows.length} ครั้ง (เก็บไว้ในเครื่องนี้เท่านั้น)`, extra: [pre],
+      buttons: [{ t: 'ปิด', on: closeDialog }] });
+  });
 }
 
 (async function boot() {

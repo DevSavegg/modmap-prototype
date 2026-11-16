@@ -13,8 +13,13 @@ A clickable web prototype of MOD MAP, KMUTT's indoor and outdoor navigation app 
 - **Navigate** in one of two modes:
   - **Simulation:** the dot walks the route at ×1 to ×16 speed, so testers can sit and click through.
   - **Real walk:** GPS outdoors. Indoors, the tester taps *next* at each step, because phones and browsers can't get a live indoor position.
-- **Recover a lost position** by photographing the nearest room sign. The app reads it with Tesseract.js OCR, on the phone, and re-plans from that door. Typing the room number is the fallback.
-  - In simulation mode, "use a sample sign" generates a sign image and runs the same OCR on it.
+- **Recover a lost position** by photographing the nearest room sign. The app finds the room code and re-plans from that door. Two OCR layers run on the phone:
+  1. **Tesseract.js 5.1.1:** Latin letters and digits, tried on the photo as taken and inverted.
+  2. **[OpenThai2.0-OCR-Text](https://huggingface.co/iapp/OpenThai2.0-OCR-Text)** (iApp, Apache-2.0, about 4 MB): runs only when Tesseract finds no room code. It is ported to the browser in `openthai.js` with onnxruntime-web: detector, line boxes, then the CTC recognizer. Unlike the original runtime, its line boxes are axis-aligned.
+
+  Typing the room number is the last fallback. In simulation mode, "use a sample sign" generates a sign image and runs the same OCR on it.
+
+  Each attempt is logged on the phone: what each engine read, and which room it matched. Open the log from the welcome screen ("บันทึกการอ่านป้าย"). Use it to measure the hit rate on real N7 sign photos.
 
 The welcome screen has three test scenarios. They are listed in `SCENARIOS` at the top of `app.js`; edit the text there. Paste the Google Form link into `FEEDBACK_URL` in the same place to show the feedback button.
 
@@ -31,6 +36,7 @@ The welcome screen has three test scenarios. They are listed in `SCENARIOS` at t
 - `data/campus.json`: an extract of OpenStreetMap data, © OpenStreetMap contributors, under the [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 - `data/n7.json` and the room entries in `data/places.json`: the team's own N7 data, published here in simplified form only.
 - `icons/`: from the team's Figma design.
+- `models/openthai/`: unchanged copies of OpenThai2.0-OCR-Text's `det.onnx`, `rec.onnx` and `rec_dict.txt`, under Apache-2.0 (see `NOTICE` and `LICENSE.txt` there). onnxruntime-web 1.19.2 (MIT) loads from jsDelivr.
 - Leaflet 1.9.4 (BSD-2), Tesseract.js 5.1.1 (Apache-2.0), and the Kanit and Prompt fonts (OFL) all load from public CDNs.
 
 ## Rebuild the data

@@ -1,0 +1,3 @@
+OpenThai2.0-OCR-Text by iApp Technology (https://huggingface.co/iapp/OpenThai2.0-OCR-Text)
+Licensed under the Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0
+Files: det.onnx, rec.onnx, rec_dict.txt, NOTICE (unchanged copies, SHA-256 checked against the model repo).
