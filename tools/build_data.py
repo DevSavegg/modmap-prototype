@@ -79,6 +79,38 @@ gnodes = [[r6(nodes[n][0]), r6(nodes[n][1])] for n in best]
 gedges = sorted({(min(idx[a], idx[b]), max(idx[a], idx[b]), round(d, 1))
                  for a in best for b, d in adj[a].items() if b in idx})
 
+# Entrances checked on site by the team. Each one becomes a graph node, joined to the nearest path by
+# splitting that path's edge, so routes end at the real door instead of the path point closest to the outline.
+ENTRANCE_FIX = {
+    "N7": [13.653671, 100.494731],   # south side, ~7 m east of the building centre (marked by the lead, 16 Nov)
+}
+KXm, KYm = 111320 * math.cos(math.radians(13.65)), 110540
+def _pxy(ll):
+    return ll[1] * KXm, ll[0] * KYm
+def add_entrance(pt):
+    """Split the edge nearest to pt at the foot of the perpendicular and hang pt off it. Returns pt's node index."""
+    px, py = _pxy(pt)
+    best = None
+    for k, (a, b, _) in enumerate(gedges):
+        ax, ay = _pxy(gnodes[a]); bx, by = _pxy(gnodes[b])
+        vx, vy = bx - ax, by - ay; L2 = vx * vx + vy * vy or 1e-9
+        t = max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / L2))
+        qx, qy = ax + t * vx, ay + t * vy
+        d = math.hypot(px - qx, py - qy)
+        if best is None or d < best[0]:
+            best = (d, k, t, qx, qy)
+    d, k, t, qx, qy = best
+    a, b, _ = gedges[k]
+    if t <= 0.02 or t >= 0.98:
+        q = a if t <= 0.02 else b
+    else:
+        q = len(gnodes); gnodes.append([r6(qy / KYm), r6(qx / KXm)])
+        gedges[k] = (min(a, q), max(a, q), round(hav(gnodes[a], gnodes[q]), 1))
+        gedges.append((min(q, b), max(q, b), round(hav(gnodes[q], gnodes[b]), 1)))
+    n = len(gnodes); gnodes.append([r6(pt[0]), r6(pt[1])])
+    gedges.append((min(q, n), max(q, n), round(max(0.5, d), 1)))
+    return n
+
 def centroid(poly):
     a = cx = cy = 0.0
     for (y0, x0), (y1, x1) in zip(poly, poly[1:]):
@@ -155,12 +187,17 @@ def nearest_graph_node(pt, poly=None):
             best_i, best_d = i, d
     return best_i, best_d
 
+fixed_entrance = {code: add_entrance(pt) for code, pt in ENTRANCE_FIX.items()}
 places = []
 for code, th, en, aliases, cats, rx in REG:
     b = match(rx)
     rec = {"id": code, "kind": "building", "code": code, "th": th, "en": en, "aliases": aliases, "cats": cats}
     if b:
-        gi, gd = nearest_graph_node(b["c"], b["poly"])
+        if code in fixed_entrance:
+            gi, gd = fixed_entrance[code], 0
+            rec["entrance_checked"] = True
+        else:
+            gi, gd = nearest_graph_node(b["c"], b["poly"])
         rec.update({"c": b["c"], "osm": b["osm"], "entrance_node": gi, "entrance": gnodes[gi], "entrance_gap_m": round(gd)})
     places.append(rec)
 

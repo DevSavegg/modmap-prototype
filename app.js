@@ -465,7 +465,7 @@ function thumbSVG(p) {
     const pts = x.poly.map(P).map((q) => q.join(',')).join(' ');
     s += `<polygon points="${pts}" fill="${x === hit ? '#fde3cc' : '#e0ddd7'}" stroke="${x === hit ? '#fb8c3a' : '#cbc6be'}" stroke-width="${x === hit ? 1.2 : 0.6}"/>`;
   }
-  if (b.entrance) { const e = P(b.entrance); s += `<circle cx="${e[0]}" cy="${e[1]}" r="3" fill="#fb8c3a"/><text x="${e[0] + 5}" y="${e[1] + 1.5}" font-size="6" fill="#fb8c3a" font-family="Kanit">ทางเข้า (โดยประมาณ)</text>`; }
+  if (b.entrance) { const e = P(b.entrance); s += `<circle cx="${e[0]}" cy="${e[1]}" r="3" fill="#fb8c3a"/><text x="${e[0] + 5}" y="${e[1] + 1.5}" font-size="6" fill="#fb8c3a" font-family="Kanit">${b.entrance_checked ? 'ทางเข้า' : 'ทางเข้า (โดยประมาณ)'}</text>`; }
   return s + `<text x="-86" y="-46" font-size="7" fill="#555" font-family="Kanit">${esc(b.code)} · ${esc(short(b.th, 26))}</text></svg>`;
 }
 
@@ -546,7 +546,7 @@ function planRoute(dest, kind) {
   const steps = out.len > 3 ? legSteps(legsOf(pts.map(xy), 35, 8), 'out', null) : [];
   const inn = dest.kind === 'room' && dest.mapped ? indoorPlan(dest.floor, dest.id) : null;
   if (inn) {
-    steps.push({ icon: 'enter', title: `เข้าอาคาร ${b.code}`, sub: 'ทางเข้าโดยประมาณ', len: 0, s0: out.len, s1: out.len, phase: 'out' });
+    steps.push({ icon: 'enter', title: `เข้าอาคาร ${b.code}`, sub: b.entrance_checked ? '' : 'ทางเข้าโดยประมาณ', len: 0, s0: out.len, s1: out.len, phase: 'out' });
     steps.push({ icon: 'lift', title: `ขึ้นลิฟต์ไปยังชั้น ${dest.floor}`, len: 0, s0: 0, s1: 0, phase: 'lift' });
     steps.push(...inn.steps);
   } else {
