@@ -32,7 +32,7 @@ The welcome screen has three test scenarios. They are listed in `SCENARIOS` at t
 
 ## Test data (labelled `web`)
 
-- **Consent first:** the first screen asks for consent, a tester code (generated, editable) and an optional height (which predicts step length). Without consent the app works but logs nothing.
+- **Notice first:** the first screen tells testers that anonymous usage data is collected (KMUTT needs no consent form for this project, 16 Nov). It shows a tester code (generated, editable) and asks for an optional height, which predicts step length. Testers who tap "ไม่ต้องการให้เก็บข้อมูล" can use the app with nothing logged.
 - **What a run is:** one scenario, one free navigation or one calibration walk. Each finished run is saved in the phone's outbox (IndexedDB), then sent to the team's Google Apps Script (`TESTLOG_URL` in `config.js`; deploy steps in [tools/apps-script/README.md](tools/apps-script/README.md)).
 - **If sending fails:** runs stay in the outbox and are retried when the app opens or goes online. "ส่งไฟล์ข้อมูลการทดสอบที่ค้างอยู่" on the welcome screen shares them as a file.
 - **What's logged:**

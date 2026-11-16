@@ -148,20 +148,21 @@
 
       <div class="consent" id="consent" hidden>
         <h1>ก่อนเริ่มทดสอบ</h1>
-        <p>ต้นแบบนี้บันทึกข้อมูลระหว่างการทดสอบ เพื่อใช้พัฒนาระบบนำทาง MOD MAP (โปรเจกต์ SE ทีม G9 มจธ.) เท่านั้น:</p>
+        <p>ระหว่างการทดสอบ ต้นแบบนี้เก็บข้อมูลการใช้งานแบบไม่ระบุตัวตน เพื่อใช้พัฒนาระบบนำทาง MOD MAP (โปรเจกต์ SE ทีม G9 มจธ.) เท่านั้น:</p>
         <ul>
           <li>การเคลื่อนไหวของโทรศัพท์ (ใช้นับก้าวและจับการเลี้ยว)</li>
           <li>ตำแหน่ง GPS ระหว่างเดินนอกอาคาร</li>
           <li>รุ่นโทรศัพท์ เบราว์เซอร์ ปุ่มที่กด และเวลาที่ใช้</li>
-          <li>ผลการอ่านป้ายห้อง และรูปป้าย ถ้าคุณเลือกส่ง</li>
+          <li>ผลการอ่านป้ายห้อง และรูปป้ายเฉพาะเมื่อคุณเลือกส่ง</li>
         </ul>
-        <p>ไม่เก็บชื่อหรือข้อมูลติดต่อ ข้อมูลเก็บในบัญชี Google ของทีม และจะลบเมื่อจบโปรเจกต์ (มีนาคม 2570) ถ้าต้องการให้ลบก่อนนั้น แจ้งรหัสผู้ทดสอบของคุณกับทีมได้ทุกเมื่อ</p>
+        <p>ไม่เก็บชื่อหรือข้อมูลติดต่อ ระบบใช้รหัสผู้ทดสอบแทนชื่อ</p>
         <label for="c-code">รหัสผู้ทดสอบ</label>
         <input id="c-code" autocomplete="off" maxlength="24">
         <label for="c-height">ส่วนสูง (ซม.) ไม่บังคับ ใช้ประมาณความยาวก้าว</label>
         <input id="c-height" inputmode="numeric" autocomplete="off" placeholder="เช่น 168" maxlength="3">
         <label class="chk"><input type="checkbox" id="c-photos"> ส่งรูปป้ายห้องที่ถ่ายระหว่างทดสอบด้วย</label>
-        <div class="btnrow"><button class="btn soft" id="c-no">ไม่บันทึกข้อมูล</button><button class="btn primary" id="c-yes">ยินยอมและเริ่ม</button></div>
+        <button class="btn primary wide" id="c-yes">เริ่มทดสอบ</button>
+        <button class="linkbtn" id="c-no">ไม่ต้องการให้เก็บข้อมูล</button>
       </div>
 
       <div id="wl-main" hidden>

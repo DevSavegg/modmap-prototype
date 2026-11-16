@@ -27,7 +27,8 @@ All of it is `web` data: browser sensors, no barometer. It is kept apart from th
 - **Why it matters:** the URL is visible in the public repo. The script accepts only data shaped like a MOD MAP test and saves each run once, but it can't tell a real tester from someone else.
 - **Keeping the data:** download the Drive folder as a zip and unpack it into `SE/N7-Pilot/data/raw/web-tests/<date>/` for analysis.
 - **Never commit test data to the public repo.** It holds GPS points, motion and, for some testers, sign photos.
-- **Deletion:** the consent text promises deletion when the project ends (March 2027), or earlier for any tester who asks with their tester code.
+- **Notice:** the app's first screen tells testers that anonymous data is collected; KMUTT needs no consent form for this project.
+- **Delete the test record:** one record from the connection check on 16 Nov (tester `CHECK`, kind `endpoint-check`) can be deleted, both the file and its sheet row.
 
 ## What a run file holds (`schema: modmap-web-test/1`)
 
