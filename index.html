@@ -67,7 +67,7 @@
         <button class="btn primary" id="btn-route"><img src="icons/route.svg" alt="">เส้นทาง</button>
         <button class="btn soft" id="btn-start"><img src="icons/nav-arrow.svg" alt="">เริ่มนำทาง</button>
       </div>
-      <button class="btn primary wide" id="btn-finish" hidden><img src="icons/pin.svg" alt="" class="pin-btn">เสร็จสิ้นการนำทาง</button>
+      <button class="btn primary wide" id="btn-finish" hidden><img src="icons/location-on-white.svg" alt="">เสร็จสิ้นการนำทาง</button>
     </div>
   </section>
 
@@ -124,24 +124,25 @@
       <button id="sim-play" aria-label="หยุด/เล่น">❚❚</button>
       <button id="sim-speed" aria-label="ความเร็ว">×8</button>
     </div>
-    <button class="compassbtn" id="btn-compass" aria-label="หมุนแผนที่ตามทางเดิน หรือให้ทิศเหนืออยู่ด้านบน" hidden><svg viewBox="0 0 24 24" id="compass-needle"><path d="M12 2.5 16 12H8z" fill="#e5533d"/><path d="M12 21.5 8 12h8z" fill="#b0b0b0"/></svg></button>
-    <button class="floorpill" id="floorpill" hidden><svg viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5zM2 12l10 5 10-5M2 16l10 5 10-5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span id="floorpill-t">ชั้น 6</span><span class="chev">⌄</span></button>
+    <!-- compass FAB (Figma F28 Group 35): the needle shows where north is on the turned map -->
+    <button class="compassbtn" id="btn-compass" aria-label="หมุนแผนที่ตามทางเดิน หรือให้ทิศเหนืออยู่ด้านบน" hidden><img src="icons/compass-needle.svg" alt="" id="compass-needle"></button>
+    <button class="floorpill" id="floorpill" hidden><svg class="lay" viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5zM2 12l10 5 10-5M2 16l10 5 10-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span id="floorpill-t">ชั้น 6</span><svg class="chev" viewBox="0 0 12 8"><path d="M1 1.5l5 5 5-5" fill="none" stroke="#000" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div class="floormenu" id="floormenu" hidden></div>
     <button class="lostbtn" id="lostbtn" hidden>หาตำแหน่งไม่เจอ?</button>
     <div class="navbar" id="navbar">
-      <button class="xbtn" id="nav-x" aria-label="หยุดนำทาง">✕</button>
+      <button class="xbtn" id="nav-x" aria-label="หยุดนำทาง"><img src="icons/nav-close.svg" alt=""></button>
       <div class="navstat"><b id="nav-min"></b><span id="nav-dist"></span></div>
-      <button class="expand" id="nav-expand" aria-label="ดูขั้นตอนทั้งหมด">⌃</button>
+      <button class="navgrab" id="nav-expand" aria-label="ดูขั้นตอนทั้งหมด"></button>
     </div>
     <div class="sheet tall" id="nav-steps" hidden>
       <div class="grab"></div>
-      <div class="navsheethead"><button class="xbtn" id="nav-x2">✕</button><div class="navstat"><b id="nav-min2"></b><span id="nav-dist2"></span></div></div>
+      <div class="navsheethead"><button class="xbtn" id="nav-x2" aria-label="หยุดนำทาง"><img src="icons/nav-close.svg" alt=""></button><div class="navstat"><b id="nav-min2"></b><span id="nav-dist2"></span></div></div>
       <div class="steps"><h3>ขั้นตอน</h3><ul id="nav-steplist"></ul></div>
     </div>
   </section>
 
   <!-- ARRIVED -->
-  <div class="arrived" id="arrived" hidden><span class="arr-ico">✓</span>คุณมาถึงแล้ว</div>
+  <div class="arrived" id="arrived" hidden><img src="icons/arrived.svg" alt="" class="arr-ico">คุณมาถึงแล้ว</div>
 
   <!-- WELCOME / SCENARIOS -->
   <section id="welcome" class="page" hidden>

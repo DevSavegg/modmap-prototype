@@ -250,7 +250,7 @@ const ME_D = { nav: 90, sm: 32 };
 const meIcon = (lost, size) => { const d = ME_D[size] || 64;
   return L.divIcon({ className: '', html: `<div class="me-marker${lost ? ' lost' : ''}${size ? ` ${size}` : ''}"><b class="beam"></b><i></i></div>`, iconSize: [d, d], iconAnchor: [d / 2, d / 2] }); };
 const pinIcon = (w = 32) => L.divIcon({ className: 'pin-marker', html: '<img src="icons/pin.svg" alt="">', iconSize: [w, w * 1.5], iconAnchor: [w / 2, w * 1.44] });
-const pinLabel = (t, plan) => L.divIcon({ className: `pin-label${plan ? ' plan' : ''}`, html: esc(t), iconSize: [160, plan ? 30 : 24], iconAnchor: plan ? [-16, 34] : [-26, 40] });
+const pinLabel = (t, plan) => L.divIcon({ className: `pin-label${plan ? ' plan' : ''}`, html: `<span>${esc(t)}</span>`, iconSize: [160, plan ? 30 : 24], iconAnchor: plan ? [-16, 34] : [-26, 40] });
 
 function initMaps() {
   cmap = L.map('cmap', { zoomControl: false, minZoom: 15, maxZoom: 20, zoomSnap: 0.25, attributionControl: true });
@@ -273,7 +273,7 @@ function initMaps() {
   for (const p of PLACES) {
     if (p.kind !== 'building' || !p.c) continue;
     L.marker(p.c, { interactive: false, keyboard: false,
-      icon: L.divIcon({ className: 'blabel', html: `<b>${esc(p.code)}</b><br>${esc(short(p.th, 20))}`, iconSize: [130, 26], iconAnchor: [65, 13] }) }).addTo(C.labels);
+      icon: L.divIcon({ className: 'blabel', html: `<span><b>${esc(p.code)}</b><br>${esc(short(p.th, 20))}</span>`, iconSize: [130, 26], iconAnchor: [65, 13] }) }).addTo(C.labels);
   }
   const syncLabels = () => { if (cmap.getZoom() >= 17) C.labels.addTo(cmap); else C.labels.remove(); };
   cmap.on('zoomend', syncLabels);
@@ -310,25 +310,30 @@ function drawFloor(fl, hitCode) {
   const F = N7.floors[fl], cy = F.corridor.y;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const b of F.boxes) { x0 = Math.min(x0, b.box[0]); y0 = Math.min(y0, b.box[1]); x1 = Math.max(x1, b.box[2]); y1 = Math.max(y1, b.box[3]); }
-  L.rectangle([[y0 - 1.5, x0 - 1.5], [y1 + 1.5, x1 + 1.5]], { color: '#9a9a9a', weight: 1, fillColor: '#f3f3f3', fillOpacity: 1, interactive: false }).addTo(C.floor);
-  L.rectangle([[cy - 1.6, F.corridor.x0], [cy + 1.6, F.corridor.x1]], { stroke: false, fillColor: '#ffffff', fillOpacity: 1, interactive: false }).addTo(C.floor);
+  // Figma F18, F29: white outside, #f5f5f5 corridor, #e0e0e0 rooms with 3 px #757575 walls, a cream core behind the lift
+  // and stairs, white tiles with grey pictograms for the lift, stairs and toilets; the destination has only its pin and label
+  L.rectangle([[y0 - 1.5, x0 - 1.5], [y1 + 1.5, x1 + 1.5]], { stroke: false, fillColor: '#ffffff', fillOpacity: 1, interactive: false }).addTo(C.floor);
+  L.rectangle([[cy - 1.6, F.corridor.x0], [cy + 1.6, F.corridor.x1]], { stroke: false, fillColor: '#f5f5f5', fillOpacity: 1, interactive: false }).addTo(C.floor);
   const boxes = F.boxes.map((b) => ({ ...b, box: [...b.box] }));
   boxes.push({ code: 'lift', label: 'ลิฟต์', kind: 'lift', box: liftBox(F) });
   for (const b of boxes) {
     const bx = b.box;
     if (bx[1] < cy - 1.6 && bx[3] > cy + 1.6) { if ((bx[1] + bx[3]) / 2 > cy) bx[1] = cy + 1.6; else bx[3] = cy - 1.6; } // keep the corridor clear
-    const hit = b.code === hitCode;
-    const fill = b.kind === 'lift' ? '#bdbdbd' : b.kind === 'wc' ? '#d8e2ea' : hit ? '#ffe3cc' : '#d3d3d3';
-    L.rectangle([[bx[1], bx[0]], [bx[3], bx[2]]], { color: hit ? '#fb8c3a' : '#8c8c8c', weight: hit ? 2.5 : 1, fillColor: fill, fillOpacity: 1, interactive: false }).addTo(C.floor);
-    const lab = b.kind === 'lift' ? 'ลิฟต์/บันได' : b.kind === 'wc' ? 'ห้องน้ำ' : b.label;
-    if (!hit) {
-      L.marker([(bx[1] + bx[3]) / 2, (bx[0] + bx[2]) / 2], { interactive: false, keyboard: false,
-        icon: L.divIcon({ className: 'rlabel far', html: esc(lab), iconSize: [80, 16], iconAnchor: [40, 8] }) }).addTo(C.floor);
+    const hit = b.code === hitCode, core = b.kind === 'lift' || b.kind === 'stairs';
+    L.rectangle([[bx[1], bx[0]], [bx[3], bx[2]]], { color: '#757575', weight: 3, fillColor: core ? '#fff9e6' : '#e0e0e0', fillOpacity: 1, interactive: false }).addTo(C.floor);
+    const c = [(bx[1] + bx[3]) / 2, (bx[0] + bx[2]) / 2];
+    const tile = { lift: 'poi-lift', stairs: hitCode === 'stairs' ? 'poi-stairs-route' : 'poi-stairs', wc: 'poi-toilet' }[b.kind];
+    if (tile) {
+      const d = b.kind === 'lift' ? 34 : 28;
+      L.marker(c, { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'poi far', html: `<img src="icons/${tile}.svg" alt="">`, iconSize: [d, d], iconAnchor: [d / 2, d / 2] }) }).addTo(C.floor);
+    } else if (!hit) {
+      L.marker(c, { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: 'rlabel far', html: `<span>${esc(b.label)}</span>`, iconSize: [90, 18], iconAnchor: [45, 9] }) }).addTo(C.floor);
     }
     if (hit) {
-      const c = [(bx[1] + bx[3]) / 2, (bx[0] + bx[2]) / 2];
-      L.marker(c, { icon: pinIcon(), interactive: false }).addTo(C.fpins);
-      L.marker(c, { icon: pinLabel(BYID[b.code] ? titleOf(BYID[b.code]) : b.label), interactive: false }).addTo(C.fpins);
+      L.marker(c, { icon: pinIcon(26), interactive: false }).addTo(C.fpins);
+      L.marker(c, { icon: pinLabel(BYID[b.code] && BYID[b.code].kind === 'room' ? BYID[b.code].code : b.label, true), interactive: false }).addTo(C.fpins);
     }
   }
   $('#floorpill-t').textContent = `ชั้น ${fl}`;
@@ -456,7 +461,7 @@ function choose(p, hit) {
 // place sheet
 function openPlace(p) {
   S.place = p;
-  show('place'); showMap('campus');
+  show('place'); showMap('campus'); $('#place').classList.remove('done');
   $('#place-q').textContent = titleOf(p);
   $('#place-title').textContent = titleOf(p);
   $('#place-sub').textContent = subOf(p, true);
@@ -531,9 +536,9 @@ function thumbSVG(p) {
     if (hit) { const cx = (hit.box[0] + hit.box[2]) / 2; x0 = Math.max(x0, cx - 45); x1 = Math.min(x1, cx + 45); y0 = Math.max(y0, Math.min(hit.box[1], cy) - 10); y1 = Math.min(y1, Math.max(hit.box[3], cy) + 10); }
     const r = (b, fill, stroke, w) => `<rect x="${b[0]}" y="${-b[3]}" width="${b[2] - b[0]}" height="${b[3] - b[1]}" fill="${fill}" stroke="${stroke}" stroke-width="${w}"/>`;
     let s = `<svg viewBox="${x0 - 2} ${-y1 - 2} ${x1 - x0 + 4} ${y1 - y0 + 4}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="แผนผังชั้น ${p.floor} ตำแหน่งห้อง ${esc(p.code)}">`;
-    s += `<rect x="${x0 - 2}" y="${-y1 - 2}" width="${x1 - x0 + 4}" height="${y1 - y0 + 4}" fill="#f3f3f3"/>`;
-    s += r([F.corridor.x0, cy - 1.6, F.corridor.x1, cy + 1.6], '#fff', 'none', 0);
-    for (const b of F.boxes) s += r(b.box, b === hit ? '#ffe3cc' : b.kind === 'wc' ? '#d8e2ea' : '#d3d3d3', b === hit ? '#fb8c3a' : '#8c8c8c', b === hit ? 0.6 : 0.25);
+    s += `<rect x="${x0 - 2}" y="${-y1 - 2}" width="${x1 - x0 + 4}" height="${y1 - y0 + 4}" fill="#fff"/>`;   // the floor-plan palette of Figma F18
+    s += r([F.corridor.x0, cy - 1.6, F.corridor.x1, cy + 1.6], '#f5f5f5', 'none', 0);
+    for (const b of F.boxes) s += r(b.box, b === hit ? '#ffe3cc' : b.kind === 'lift' ? '#fff9e6' : '#e0e0e0', b === hit ? '#fb8c3a' : '#757575', b === hit ? 0.6 : 0.5);
     if (hit) s += `<text x="${(hit.box[0] + hit.box[2]) / 2}" y="${-(hit.box[1] + hit.box[3]) / 2 + 1.5}" font-size="4" text-anchor="middle" fill="#fb8c3a" font-family="Prompt">${esc(p.code)}</text>`;
     return s + `<text x="${x0}" y="${-y0 + 1}" font-size="3" fill="#757575" font-family="Kanit">แผนผังชั้น ${p.floor} (แบบย่อ)</text></svg>`;
   }
@@ -907,9 +912,9 @@ function startNav(route) {
   if (S.mode === 'real') headingOn();
   C.route.clearLayers(); C.pins.clearLayers(); C.hl.clearLayers();
   const outs = route.segs.filter((s) => s.type === 'out');
-  for (const s of outs) {
-    L.polyline(s.pts, { color: '#ffffff', weight: 11, opacity: 0.9, interactive: false }).addTo(C.route);
-    L.polyline(s.pts, { color: '#fb8c3a', weight: 7, interactive: false }).addTo(C.route);
+  for (const s of outs) {                    // Figma F26: a 20 px #fb8c3a band with 1 px #e65100 edges
+    L.polyline(s.pts, { color: '#e65100', weight: 22, interactive: false, lineJoin: 'round' }).addTo(C.route);
+    L.polyline(s.pts, { color: '#fb8c3a', weight: 20, interactive: false, lineJoin: 'round' }).addTo(C.route);
   }
   if (outs.length) { const e = outs[outs.length - 1]; L.marker(e.pts[e.pts.length - 1], { icon: pinIcon(), interactive: false }).addTo(C.pins); }
   if (S.mode === 'sim') {
@@ -971,11 +976,20 @@ function drawLegOn(seg, dest) {              // a floor with one leg of the rout
   const fl = segFloor(seg);
   const hit = dest && dest.kind === 'room' && dest.floor === fl ? dest.id : seg.type === 'lift' || (seg.to && seg.to.kind === 'lift') ? 'lift' : null;
   drawFloor(fl, hit);
-  C.froute.clearLayers();
-  if (seg.type === 'in' && seg.pts.length > 1) {
-    L.polyline(seg.pts.map(fll), { color: '#ffffff', weight: 10, interactive: false }).addTo(C.froute);
-    L.polyline(seg.pts.map(fll), { color: '#fb8c3a', weight: 6, interactive: false }).addTo(C.froute);
+  C.froute.clearLayers(); C.fband = null;
+  if (seg.type === 'in' && seg.pts.length > 1) {   // Figma F28: the way still to walk orange, the part walked pale, both with #e65100 edges
+    const o = { interactive: false, lineJoin: 'round', lineCap: 'round' }, all = seg.pts.map(fll);
+    C.fband = { seg,
+      doneEdge: L.polyline([], { ...o, color: '#e65100', weight: 18 }).addTo(C.froute), done: L.polyline([], { ...o, color: '#fff3c4', weight: 16 }).addTo(C.froute),
+      restEdge: L.polyline(all, { ...o, color: '#e65100', weight: 20 }).addTo(C.froute), rest: L.polyline(all, { ...o, color: '#fb8c3a', weight: 18 }).addTo(C.froute) };
   }
+}
+function splitBand(seg, s) {                 // move the split between the walked and the remaining part of the floor route to s metres
+  const B = C.fband; if (!B || B.seg !== seg) return;
+  let i = 1; while (i < seg.pts.length - 1 && seg.cum[i] <= s) i++;
+  const here = along(seg, s), done = [...seg.pts.slice(0, i), here].map(fll), rest = [here, ...seg.pts.slice(i)].map(fll);
+  B.doneEdge.setLatLngs(s > 0 ? done : []); B.done.setLatLngs(s > 0 ? done : []);
+  B.restEdge.setLatLngs(rest); B.rest.setLatLngs(rest);
 }
 function drawSeg(seg) { drawLegOn(seg, NAV.r.dest); NAV.drawn = NAV.r.segs.indexOf(seg); }
 function stopNav() {
@@ -1077,7 +1091,7 @@ function arrive() {
   TestLog.event('arrived', { dest: p.id });
   TestLog.endRun('arrived');
   show('place');
-  $('#arrived').hidden = false;
+  $('#arrived').hidden = false; $('#place').classList.add('done');   // Figma F30: no search bar and no picture, only title, subtitle, button
   $('#place-q').textContent = titleOf(p);
   $('#place-title').textContent = titleOf(p);
   $('#place-sub').textContent = subOf(p, true);
@@ -1103,7 +1117,7 @@ function render() {
   if (seg.type === 'out') {
     pos = real ? outdoorMe(nowMs()) : along(seg, NAV.s);
     if ($('#cmap').hidden) showMap('campus');
-    C.me.setIcon(meIcon(false)); C.me.setLatLng(pos).addTo(cmap);
+    C.me.setIcon(meIcon(false, 'nav')); C.me.setLatLng(pos).addTo(cmap);
     cmap.panTo(pos, real ? { animate: true, duration: 0.6, easeLinearity: 0.9 } : { animate: false });   // real walk: glide, not jump
     $('#floorpill').hidden = true;
   } else {
@@ -1111,8 +1125,9 @@ function render() {
     if (NAV.drawn !== NAV.seg) drawSeg(seg);
     if ($('#fmap').hidden) showMap('floor');
     pos = seg.type === 'lift' ? liftPoint(fl) : along(seg, NAV.s);
+    if (seg.type === 'in') splitBand(seg, NAV.s);
     if (S.viewFloor === fl) {                // the dot only on the floor the tester is on
-      C.fme.setIcon(meIcon(NAV.lost)); C.fme.setLatLng(fll(pos)).addTo(fmap);
+      C.fme.setIcon(meIcon(NAV.lost, 'nav')); C.fme.setLatLng(fll(pos)).addTo(fmap);
       if (!NAV.lost) fmap.panTo(fll(pos), real ? { animate: true, duration: 0.5 } : { animate: false });
     } else C.fme.remove();
     $('#floorpill').hidden = false;
@@ -1794,15 +1809,15 @@ function wire() {
   $('#cam-shot').addEventListener('click', shoot);
   $('#cam-x').addEventListener('click', () => { closeCamera(); TestLog.event('camera_close', {}); dlgLost(false); });
   $('#cam-file').addEventListener('click', () => { closeCamera(); pickPhoto(); });
-  $('#floorpill').addEventListener('click', () => {
-    const m = $('#floormenu');
-    if (!m.hidden) { m.hidden = true; return; }
+  $('#floorpill').addEventListener('click', () => {      // floor menu (Figma F32): the floors that have a plan, numbers only
+    const m = $('#floormenu'), menu = (open) => { m.hidden = !open; $('#floorpill').classList.toggle('open', open); };
+    if (!m.hidden) { menu(false); return; }
     m.innerHTML = '';
-    for (const f of N7_FLOORS) {
-      const b = document.createElement('button'); b.textContent = `ชั้น ${f}`;
-      b.disabled = !N7.floors[f]; b.classList.toggle('on', f === S.viewFloor);
+    for (const f of N7_FLOORS.filter((x) => N7.floors[x])) {
+      const b = document.createElement('button'); b.textContent = f; b.setAttribute('aria-label', `ชั้น ${f}`);
+      b.classList.toggle('on', f === S.viewFloor);
       b.addEventListener('click', () => {
-        m.hidden = true;
+        menu(false);
         const seg = NAV.phase !== 'done' && curSeg();
         if (seg && seg.type !== 'out' && segFloor(seg) === f) { drawSeg(seg); render(); }         // back to the tester's own floor
         else { drawFloor(f, NAV.r && NAV.r.dest.floor === f ? NAV.r.dest.id : null); C.froute.clearLayers(); C.fme.remove(); }
@@ -1810,8 +1825,8 @@ function wire() {
       });
       m.appendChild(b);
     }
-    if (N7_FLOORS.some((f) => !N7.floors[f])) { const sm = document.createElement('small'); sm.textContent = 'ชั้นอื่นยังไม่มีแผนผัง'; m.appendChild(sm); }
-    m.hidden = false;
+    menu(true);
+    const on = m.querySelector('.on'); if (on) on.scrollIntoView({ block: 'nearest' });
   });
   for (const b of document.querySelectorAll('.modeswitch button')) {
     b.addEventListener('click', () => { S.mode = b.dataset.mode; for (const x of document.querySelectorAll('.modeswitch button')) x.classList.toggle('on', x === b); });
