@@ -31,7 +31,7 @@ const TestLog = (() => {
   function reset() { if (run) endRun('abandoned'); tester = null; store.del(); notify(); }
   const on = () => !!(tester && tester.consent);
   function setCensus(c) { if (tester) { tester.census = c; store.set(tester); } }
-  function setStepLength(L, src) { if (tester) { tester.step_len = { L: +L.toFixed(3), src, at: iso() }; store.set(tester); notify(); } }
+  function setStepLength(L, src, extra) { if (tester) { tester.step_len = { L: +L.toFixed(3), src, at: iso(), ...extra }; store.set(tester); notify(); } }
 
   // ---- runs and events
   function startRun(info) {
@@ -157,6 +157,7 @@ const TestLog = (() => {
   return {
     decided: () => !!(tester && tester.decided), on, tester: () => tester, decide, reset, newCode, setCensus, setStepLength,
     stepLength: () => (tester && tester.step_len ? tester.step_len.L : null), height: () => (tester ? tester.height_cm : null),
+    stepHz: () => (tester && tester.step_len && tester.step_len.hz) || null,      // steps a second during the calibration walk (web-0.4.0 on)
     startRun, active, event, tap, addPhoto, summary, recStart, endRun, flush, counts, exportFile,
     onChange: (f) => listeners.push(f), endpoint: () => !!CFG.TESTLOG_URL,
   };

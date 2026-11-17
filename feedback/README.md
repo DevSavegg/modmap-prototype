@@ -128,6 +128,39 @@ Each item gives what was reported, the cause found, the change made, and the bef
   - A turn anywhere within a wide window snapped the dot forward to a corner.
   - Indoors, the step length was the outdoor (or height-based) one, but testers walk slowly while reading the phone. One tester took 30 steps in 21.6 s (1.4 steps a second), so each step was shorter than outdoors.
   - **T1-D1:** room N7-607 (SCL607) has two corridor doors, at x = 39.0 m and x = 51.0 m. The data build kept only the first, so routes from the lift went to the far door: 27.2 m instead of 15.2 m.
+- **Change (T1-S8, T1-S9, T1-S10):**
+  - **Walking out before tapping:** steps taken while the lift card shows are counted.
+    - When "ถึงชั้น … แล้ว" is pressed, the steps since the last pause of 6 s or more (waiting for or riding the lift) are credited, up to 12 m. This applies only if the tester was still walking when they pressed.
+    - A turn in that time means the first corner has already been taken.
+  - **Corners:** the dot waits at a corner until the phone turns (a gyroscope turn of 50° or more) or the tester taps "ถัดไป" (next).
+    - A turn counts only as the next corner: when the dot is waiting at it, or is within 4 m, or 35 % of the distance since the last corner, before it.
+    - Before, any corner within a wide window could be snapped to.
+  - **Step length:** each indoor step uses the reference length scaled by the current pace, within 0.7–1.1×.
+    - The current pace is the median of the last 8 gaps between steps.
+    - The reference pace depends on where the length came from: the calibration walk's own pace (now saved with it), the outdoor walk's pace, or 1.8 steps a second for the height estimate.
+  - **Logs:**
+    - each `step` entry records the length used, the pace, and whether the dot is waiting at a corner;
+    - `lift_exit` records the credited walk-out;
+    - `corner_hold` marks a wait at a corner;
+    - the run summary adds `pace_hz` and `step_len_now`.
+- **Change (T1-D1):** a room with several corridor doors is routed to the door nearest the way in. The code is in the routing commit; the data lists every door from T1-R1 on.
+- **Check:** [`checks/tracker.js`](checks/tracker.js) replays two simulated walks from the floor-6 lift to SCL607.
+  - The walker is slow: 0.55 m steps, 1.55 steps a second.
+  - The app knows neither, so it starts from its default 0.68 m step.
+
+  | Measure | Before (web-0.3.1) | After |
+  |---|---|---|
+  | A. Pressed after 9 steps out of the lift: where the dot starts | 4.9 m behind the walker | 0.3 m ahead |
+  | B. Pressed at the lift: dot went round the corner before the phone turned | yes, by 0.9 m | no |
+  | B. Most the dot got ahead of the walker | 4.8 m | 1.8 m |
+  | B. Walker's distance from the door when the dot got there | 5.2 m | 2.4 m |
+  | A. Walker's distance from the door when the dot got there | 0.8 m | 2.4 m |
+
+  In walk A the old build ends closer only by chance: it started 4.9 m behind, and its too-long steps made up the gap.
+- **Limits:**
+  - These are simulated walks.
+  - The pace model (step length proportional to pace, within 0.7–1.1×) is an assumption. Test it against the next walking test: its logs record the pace and length of every step.
+  - The numbers above use the 27.2 m route to SCL607. With the nearest door (T1-D1) the route is 15.2 m.
 
 #### T1-S11: sign photo
 

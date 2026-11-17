@@ -9,6 +9,10 @@
 const FEEDBACK_URL = (window.MM_CONFIG && window.MM_CONFIG.FEEDBACK_URL) || '';   // set in config.js
 const CAL_DIST = 53.2;                    // m: floor 6, corridor at the central lift lobby (x 63.0) to the west stair door (x 9.8)
 const DEFAULT_STEP = 0.68;               // m: step length when nothing better is known (0.415 × 1.65 m)
+// indoor tracker (T1-S8, T1-S9, T1-S10)
+const STEP_HZ_REF = 1.8;                 // steps a second of normal walking: the pace that the height ratio and outdoor walks stand for
+const RIDE_PAUSE_MS = 6000;              // no steps for this long while the lift card shows = waiting for or riding the lift
+const WALKOUT_MAX_M = 12;                // at most this much walking out of the lift (before the floor button) is credited
 const WALK = 1.25;                       // m/s, walking speed used for time estimates
 const LIFT_S = 60;                       // s added for the lift ride
 const ENTRANCE_R = 4;                    // m: the filtered progress this close to the entrance, with a fix near it, = arrived (was 15 m)
@@ -749,7 +753,63 @@ function newTracker() {
   // the browser tracker (real walk mode): steps move the dot along the planned indoor route; turns snap it to the route's corners.
   // segFrom: where the current leg is counted from: 'start', 'entrance', 'lift', 'sign', or 'sign at door' (a sign photo put the tester at the destination)
   return { on: S.mode === 'real' && Motion.running(), L: DEFAULT_STEP, Lsrc: 'default', Lgps: null, gps0: null, Lset: false,
-           outSteps: 0, inSteps: 0, segSteps: 0, sRaw: 0, lastReset: 0, arrPrompted: false, segFrom: null };
+           outSteps: 0, inSteps: 0, segSteps: 0, sRaw: 0, lastReset: 0, arrPrompted: false, segFrom: null,
+           hzRef: STEP_HZ_REF, hz: null, Lnow: null, recent: [], outTs: [],          // pace: the reference, now; recent step times
+           liftTs: [], liftTurns: [], liftT0: null, pending: null,                // steps and turns while the lift card shows
+           corners: [], ci: 0, hold: false };                                     // this leg's corners, the next one, waiting at it
+}
+function paceOf(ts) {                    // steps a second from step times (ms): the median gap between steps, pauses left out
+  const iv = [];
+  for (let i = 1; i < ts.length; i++) { const d = ts[i] - ts[i - 1]; if (d > 250 && d < 1200) iv.push(d); }
+  if (iv.length < 4) return null;
+  iv.sort((a, b) => a - b);
+  return 1000 / iv[iv.length >> 1];
+}
+// The step length for one step indoors (T1-S9): the reference length, scaled by the current pace against the pace it was measured at.
+// Testers walk slowly while reading the phone (one took 30 steps in 21.6 s), and slow steps are short; web-0.3.1 used the
+// outdoor or height-based length for every step, so the dot ran ahead.
+function stepLen(T, t) {
+  T.recent.push(t); if (T.recent.length > 9) T.recent.shift();
+  const hz = paceOf(T.recent);
+  if (!hz) return T.L;                   // the first few steps: not enough to know the pace yet
+  T.hz = hz; T.Lnow = T.L * Math.max(0.7, Math.min(1.1, hz / T.hzRef));
+  return T.Lnow;
+}
+function trackerLeg(T, seg, segFrom) {   // a new floor leg: count from its start, and wait at each corner for the turn (T1-S10)
+  Object.assign(T, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom, hold: false, ci: 0,
+    corners: seg.steps.filter((x) => x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn').map((x) => ({ s: x.s0, icon: x.icon })) });
+}
+// The dot (T1-S10): at the tracker's distance, but it doesn't go round the next corner until the phone has turned there.
+// web-0.3.1 followed the route's line by distance alone, so the dot turned the corner as soon as the step count got there.
+function placeDot(T, seg) {
+  const c = T.corners[T.ci];
+  if (c && T.sRaw > c.s + 0.5) {
+    if (!T.hold) { T.hold = true; TestLog.event('corner_hold', { at: +c.s.toFixed(1) }); }
+    NAV.s = c.s;
+  } else { T.hold = false; NAV.s = Math.min(T.sRaw, seg.len); }
+}
+// Steps taken walking out of the lift before the floor button was pressed (T1-S8): the steps since the last pause of 6 s or more
+// (waiting for or riding the lift), as long as the tester was still walking when they pressed. web-0.3.1 dropped these steps,
+// so the dot started at the lift while the tester was already in the corridor.
+function walkOut(T, tPress) {
+  const ts = T.liftTs.filter((x) => x <= tPress), none = { n: 0, m: 0, turned: false };
+  if (!ts.length || tPress - ts[ts.length - 1] >= RIDE_PAUSE_MS) return none;          // stood still before the tap: still in the lift
+  let i = ts.length - 1;
+  while (i > 0 && ts[i] - ts[i - 1] < RIDE_PAUSE_MS) i--;
+  const pause = ts[i] - (i > 0 ? ts[i - 1] : T.liftT0);
+  if (pause < RIDE_PAUSE_MS || tPress - ts[i] > 25000) return { ...none, pause: +(pause / 1000).toFixed(1) };   // no ride before these steps
+  const run = ts.slice(i), hz = paceOf(run), k = hz ? Math.max(0.7, Math.min(1.1, hz / T.hzRef)) : 0.9;
+  const turned = T.liftTurns.some((x) => x.t >= ts[i] - 500 && x.t <= tPress && Math.abs(x.deg) >= 50);
+  return { n: run.length, m: run.length * T.L * k, turned, pause: +(pause / 1000).toFixed(1), ts: run };
+}
+function applyWalkOut(T, seg, w) {
+  if (!w || !w.n) return;
+  T.recent = [...T.recent, ...w.ts].slice(-9);   // their pace is known from the first step on this floor
+  const c = T.corners[0];
+  let s = Math.min(w.m, WALKOUT_MAX_M, Math.max(0, seg.len - 1));
+  if (c && w.turned) { T.ci = 1; T.lastReset = c.s; s = Math.max(s, c.s + 0.5); }   // they had already turned into the corridor
+  T.sRaw = s;
+  placeDot(T, seg);
 }
 // plausible step lengths (m) for a height in cm: about 0.415 × height, give or take 20 %; without a height, a wide adult range
 const stepRange = (h) => (h ? [0.0033 * h, 0.0048 * h] : [0.45, 0.85]);
@@ -818,9 +878,13 @@ function enterSeg(i) {                       // start walking segment i: show th
     $('#lift-ok').textContent = `ถึงชั้น ${seg.to} แล้ว`;
     $('#lift-in').hidden = S.mode !== 'real';
     $('#liftcard').hidden = false;
+    if (T) Object.assign(T, { liftTs: [], liftTurns: [], liftT0: performance.now(), pending: null });
     TestLog.event('lift_card', { floor: seg.to, from: seg.from });
   } else $('#liftcard').hidden = true;
-  if (seg.type === 'in' && T) Object.assign(T, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom: !prev ? 'start' : prev.type === 'lift' ? 'lift' : 'entrance' });
+  if (seg.type === 'in' && T) {
+    trackerLeg(T, seg, !prev ? 'start' : prev.type === 'lift' ? 'lift' : 'entrance');
+    if (T.pending) { applyWalkOut(T, seg, T.pending); T.pending = null; }   // steps already taken out of the lift (T1-S8)
+  }
   TestLog.event('segment', { i, type: seg.type, floor: seg.type === 'out' ? null : segFloor(seg), len: +seg.len.toFixed(1) });
   if (!r.segs.some((s) => s.len > 0) && seg.type === 'in') { arrive(); return; }   // nothing to walk at all
   render();
@@ -834,8 +898,10 @@ function indoorsNow(sOut) {                  // first time indoors: the step len
     if (dist >= 60 && n >= 50 && Lg >= 0.45 && Lg <= 0.95) T.Lgps = Lg;
   }
   [T.L, T.Lsrc] = chooseStepLength(T); T.Lset = true;
+  // the pace that length belongs to: the calibration walk's own, the outdoor walk's, or normal walking for the height estimate
+  T.hzRef = T.Lsrc === 'calibration walk' ? TestLog.stepHz() || 1.75 : T.Lsrc === 'GPS walk' ? paceOf(T.outTs) || STEP_HZ_REF : STEP_HZ_REF;
   const cal = TestLog.stepLength();
-  TestLog.event('step_length', { L: +T.L.toFixed(3), source: T.Lsrc, ...(cal && T.Lsrc !== 'calibration walk' ? { cal_ignored: cal } : {}) });
+  TestLog.event('step_length', { L: +T.L.toFixed(3), source: T.Lsrc, hz_ref: +T.hzRef.toFixed(2), ...(cal && T.Lsrc !== 'calibration walk' ? { cal_ignored: cal } : {}) });
 }
 const segFloor = (seg) => (seg.type === 'lift' ? (N7.floors[seg.from] ? seg.from : seg.to) : seg.floor);   // old data had no entrance floor
 function liftPoint(fl) { const F = N7.floors[fl]; return [F.lift.x, F.lift.y]; }
@@ -865,30 +931,35 @@ function advance(ds) {                       // simulation: walk ds metres along
   if (seg.type === 'in' && isLastSeg() && S.mode === 'sim' && S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * seg.len) lose(true);
   render();
 }
-function liftDone() {
-  const seg = curSeg(); if (!seg || seg.type !== 'lift') return;
+function liftDone(t = performance.now()) {   // "ถึงชั้น … แล้ว"; t: when it was pressed (a desk check passes its own clock)
+  const seg = curSeg(), T = NAV.trk; if (!seg || seg.type !== 'lift') return;
   $('#liftcard').hidden = true;
-  TestLog.event('lift_exit', { floor: seg.to });
+  const w = T && S.mode === 'real' ? walkOut(T, t) : null;
+  if (T) T.pending = w;
+  TestLog.event('lift_exit', { floor: seg.to, ...(w ? { walkout_steps: w.n, credit_m: +w.m.toFixed(1), turned: w.turned, pause_s: w.pause ?? null } : {}) });
   nextSeg();
 }
 // ---- the browser tracker
 function onStep(ev) {
-  if (CAL.on) { calStep(); return; }
+  if (CAL.on) { calStep(ev); return; }
   const T = NAV.trk, seg = curSeg();
   if (!NAV.r || !T || S.mode !== 'real' || !seg) return;
   if (seg.type === 'out') {
-    T.outSteps++;
+    T.outSteps++; T.outTs.push(ev.t); if (T.outTs.length > 300) T.outTs.shift();
     if (NAV.g && NAV.g.onRoute) { gpsStep(T.Lout); if (!gpsAtEntrance()) render(); }
     return;
   }
+  if (seg.type === 'lift') { T.liftTs.push(ev.t); return; }   // maybe walking out before pressing the floor button (T1-S8)
   if (seg.type !== 'in' || NAV.lost) return;
   T.inSteps++; T.segSteps++;
-  T.sRaw += T.L;
+  const L = stepLen(T, ev.t);
+  T.sRaw += L;
   const end = seg.len, last = isLastSeg();
-  NAV.s = Math.min(T.sRaw, end);
-  TestLog.event('step', { s: +T.sRaw.toFixed(2), peak: +ev.peak.toFixed(2), seg: NAV.seg });
+  placeDot(T, seg);
+  TestLog.event('step', { s: +T.sRaw.toFixed(2), shown: +NAV.s.toFixed(2), L: +L.toFixed(3), hz: T.hz ? +T.hz.toFixed(2) : null, hold: T.hold || undefined,
+                          peak: +ev.peak.toFixed(2), seg: NAV.seg });
   if (last && S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * end) { lose(true); return; }
-  if (T.sRaw >= end - 1.0) {
+  if (NAV.s >= end - 1.0) {
     if (!last) { nextSeg(); return; }        // at the lift or the entrance: on to the next segment
     if (!T.arrPrompted) showArrivePrompt();
   }
@@ -897,14 +968,17 @@ function onStep(ev) {
 function onTurn(ev) {
   const T = NAV.trk, seg = curSeg();
   if (!NAV.r || !T || S.mode !== 'real' || !seg) return;
+  if (seg.type === 'lift') { T.liftTurns.push({ t: ev.t, deg: ev.deg }); TestLog.event('turn', { deg: Math.round(ev.deg), phase: 'lift' }); return; }
   if (seg.type !== 'in' || NAV.lost) { TestLog.event('turn', { deg: Math.round(ev.deg), phase: NAV.phase }); return; }
-  const corners = seg.steps.filter((x) => x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn');
-  const win = Math.max(5, 0.35 * (T.sRaw - T.lastReset));
-  let best = null;
-  for (const c of corners) { const d = Math.abs(c.s0 - T.sRaw); if (d <= win && (!best || d < Math.abs(best.s0 - T.sRaw))) best = c; }
-  const before = T.sRaw;
-  if (best && Math.abs(ev.deg) >= 50) { T.sRaw = best.s0 + 0.5; T.lastReset = T.sRaw; NAV.s = Math.min(T.sRaw, seg.len); }
-  TestLog.event('turn', { deg: Math.round(ev.deg), dur_ms: Math.round(ev.dur), s_before: +before.toFixed(2), snapped_to: best && Math.abs(ev.deg) >= 50 ? +best.s0.toFixed(2) : null });
+  // A turn counts only as the NEXT corner (T1-S9, T1-S10): when the dot waits at it, or is near it (the step count can run short).
+  // web-0.3.1 snapped the dot to whichever corner was within a wide window, so a stray turn could jump it ahead.
+  const c = T.corners[T.ci], before = T.sRaw;
+  const early = c ? Math.max(4, 0.35 * Math.max(0, c.s - T.lastReset)) : 0;
+  const take = !!c && Math.abs(ev.deg) >= 50 && T.sRaw >= c.s - early;
+  if (take) { T.ci++; T.sRaw = c.s + 0.5; T.lastReset = c.s; placeDot(T, seg); }
+  TestLog.event('turn', { deg: Math.round(ev.deg), dur_ms: Math.round(ev.dur), s_before: +before.toFixed(2), corner: c ? +c.s.toFixed(2) : null,
+                          snapped_to: take ? +c.s.toFixed(2) : null });
+  if (take && NAV.s >= seg.len - 1.0) { if (!isLastSeg()) { nextSeg(); return; } if (!T.arrPrompted) showArrivePrompt(); }
   render();
 }
 function doorSideText() {
@@ -926,7 +1000,7 @@ function trueArrive(src) {
     TestLog.event('true_arrival', { src, s: +T.sRaw.toFixed(2), route_m: +end.toFixed(2), err_m: +err.toFixed(2), seg_steps: T.segSteps, seg_from: T.segFrom, L: +T.L.toFixed(3), seg: NAV.seg, last_leg: last });
     TestLog.summary({ arrival_err_m: signAtDoor || !last ? null : +err.toFixed(2), seg_route_m: +end.toFixed(2), seg_from: T.segFrom, seg_steps: T.segSteps, in_steps: T.inSteps,
                       step_len_used: +T.L.toFixed(3), step_len_source: T.Lsrc, step_len_from_route: T.segSteps ? +(end / T.segSteps).toFixed(3) : null,
-                      tracker: T.on });
+                      step_len_now: T.Lnow ? +T.Lnow.toFixed(3) : null, pace_hz: T.hz ? +T.hz.toFixed(2) : null, tracker: T.on });
   }
   $('#arrivecard').hidden = true; $('#atdoor').hidden = true;
   if (seg) NAV.s = seg.len;
@@ -1015,7 +1089,10 @@ function nextStepReal() {           // real walk indoors: "next" = the tester's 
   TestLog.event('manual_next', { s_before: T ? +T.sRaw.toFixed(2) : +NAV.s.toFixed(2), to: end ? 'segment end' : +nxt.s0.toFixed(2), seg: NAV.seg });
   if (end) { if (isLastSeg()) trueArrive('next button'); else nextSeg(); return; }
   NAV.s = nxt.s0 + 0.01;
-  if (T) { T.sRaw = NAV.s; T.lastReset = NAV.s; }
+  if (T) {                                   // the tester says they are at the next step: corners before it are behind them
+    T.sRaw = NAV.s; T.lastReset = NAV.s; T.hold = false;
+    T.ci = T.corners.findIndex((c) => c.s > NAV.s); if (T.ci < 0) T.ci = T.corners.length;
+  }
   render();
 }
 
@@ -1266,7 +1343,7 @@ function recover(room, how) {
   NAV.lost = false; NAV.s = 0;
   const atDest = isLastSeg() && (room.id === r.dest.id || leg.len <= 1.0);   // the sign is the destination's own, or a door within 1 m of it
   TestLog.event('recover', { room: room.code, how, door_x: door.x, new_in_m: +leg.len.toFixed(1), at_dest: atDest });
-  if (NAV.trk) Object.assign(NAV.trk, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom: atDest ? 'sign at door' : 'sign' });
+  if (NAV.trk) trackerLeg(NAV.trk, leg, atDest ? 'sign at door' : 'sign');
   drawSeg(leg);
   render();
   toast(`พบตำแหน่งแล้ว: หน้าห้อง ${room.code} (จาก${how})`);
@@ -1395,14 +1472,15 @@ function calStart() {
     if (p === 'unsupported') { toast('เบราว์เซอร์นี้ไม่มีเซนเซอร์การเคลื่อนไหว ลองเปิดใน Safari หรือ Chrome', 4000); return; }
     TestLog.startRun({ kind: 'calibration', mode: 'real', distance_m: CAL_DIST, where: 'N7 floor 6: corridor at the central lift lobby to the west stair door' });
     Motion.stop(); Motion.start(); TestLog.recStart();
-    Object.assign(CAL, { on: true, steps: 0, t0: Date.now() });
+    Object.assign(CAL, { on: true, steps: 0, t0: Date.now(), ts: [] });
     TestLog.event('cal_start', {});
     $('#cal-steps').textContent = '0'; $('#cal-start').hidden = true; $('#cal-done').hidden = false;
     $('#cal-msg').textContent = 'เดินด้วยความเร็วปกติ แล้วกด "ถึงแล้ว" เมื่ออยู่ตรงประตูบันได';
   });
 }
-function calStep() {
+function calStep(ev) {
   CAL.steps++;
+  if (ev && ev.t != null) CAL.ts.push(ev.t);                 // step times: the walking pace (T1-S9)
   $('#cal-steps').textContent = CAL.steps;
   TestLog.event('step', { n: CAL.steps });
 }
@@ -1410,9 +1488,9 @@ function calDone() {
   if (!CAL.on) return;
   CAL.on = false; Motion.stop();
   const secs = (Date.now() - CAL.t0) / 1000, n = CAL.steps, L = n ? CAL_DIST / n : 0;
-  const why = calCheck(n, L), ok = !why;
-  TestLog.event('cal_done', { steps: n, secs: +secs.toFixed(1), L: +L.toFixed(3), accepted: ok, why });
-  if (ok) TestLog.setStepLength(L, 'calibration walk');
+  const why = calCheck(n, L), ok = !why, hz = paceOf(CAL.ts);
+  TestLog.event('cal_done', { steps: n, secs: +secs.toFixed(1), L: +L.toFixed(3), hz: hz && +hz.toFixed(2), accepted: ok, why });
+  if (ok) TestLog.setStepLength(L, 'calibration walk', hz ? { hz: +hz.toFixed(2) } : {});
   TestLog.endRun('calibrated', { steps: n, secs: +secs.toFixed(1), step_len: +L.toFixed(3), accepted: ok, why });
   $('#cal-done').hidden = true; $('#cal-start').hidden = false; $('#cal-start').textContent = 'เดินอีกครั้ง';
   $('#cal-msg').textContent = ok
@@ -1507,7 +1585,7 @@ function wire() {
   $('#nav-steps').addEventListener('click', (e) => { if (e.target.classList.contains('grab')) { $('#nav-steps').hidden = true; $('#navbar').hidden = false; } });
   $('#sim-play').addEventListener('click', () => { NAV.playing = !NAV.playing; $('#sim-play').textContent = NAV.playing ? '❚❚' : '▶'; });
   $('#sim-speed').addEventListener('click', () => { const v = [1, 4, 8, 16]; NAV.speed = v[(v.indexOf(NAV.speed) + 1) % v.length]; $('#sim-speed').textContent = `×${NAV.speed}`; });
-  $('#lift-ok').addEventListener('click', liftDone);
+  $('#lift-ok').addEventListener('click', () => liftDone());
   $('#lift-in').addEventListener('click', () => { TestLog.event('lift_in', {}); toast('บันทึกแล้ว กดอีกปุ่มเมื่อออกจากลิฟต์'); });
   $('#instr-next').addEventListener('click', nextStepReal);
   $('#atdoor').addEventListener('click', () => trueArrive('at-door button'));
