@@ -603,7 +603,7 @@ function legSteps(legs, firstTitle) {
   let s0 = 0;
   return legs.map((g, i) => {
     const icon = turnIcon(g.turn, i === 0);
-    const st = { icon, title: i === 0 && firstTitle ? firstTitle : TURN_T[icon], len: g.L, s0, s1: s0 + g.L };
+    const st = { icon, title: i === 0 && firstTitle ? firstTitle : TURN_T[icon], len: g.L, s0, s1: s0 + g.L, turn: i === 0 ? 0 : g.turn };
     s0 += g.L; return st;
   });
 }
@@ -619,8 +619,14 @@ function nearestDoor(fl, code, x) {        // a room with several corridor doors
   return doorAnchors(fl, code).reduce((b, d) => (!b || Math.abs(d.x - x) < Math.abs(b.x - x) ? d : b), null);
 }
 function floorLeg(fl, A, B) {
-  const cy = N7.floors[fl].corridor.y, pts = [];
-  for (const p of [...A.spur.slice().reverse(), [A.x, cy], [B.x, cy], ...B.spur]) if (!pts.length || dXY(pts[pts.length - 1], p) > 0.3) pts.push(p);
+  const F = N7.floors[fl], cy = F.corridor.y, E = F.entrance, pts = [];
+  let raw = [...A.spur.slice().reverse(), [A.x, cy], [B.x, cy], ...B.spur];
+  if (E && E.lift_via && ((A.kind === 'entrance' && B.kind === 'lift') || (A.kind === 'lift' && B.kind === 'entrance'))) {
+    // between the main door and the lifts, the short way (floor 1: through the lift lobby's side door), not round by the corridor
+    const door = E.via.length ? E.via[E.via.length - 1] : [E.x, cy], lift = [F.lift.x, F.lift.y];
+    raw = A.kind === 'entrance' ? [door, ...E.lift_via, lift] : [lift, ...E.lift_via.slice().reverse(), door];
+  }
+  for (const p of raw) if (!pts.length || dXY(pts[pts.length - 1], p) > 0.3) pts.push(p);
   const line = mkLine(pts, dXY);
   const first = A.kind === 'lift' ? (A.start ? 'จากหน้าลิฟต์ เดินตรง' : 'ออกจากลิฟต์แล้วเดินตรง') : A.kind === 'entrance' ? 'เข้าอาคารแล้วเดินตรง' : null;
   const steps = legSteps(legsOf(pts, 30, 1), first);
@@ -845,7 +851,9 @@ function stepLen(T, t) {
 }
 function trackerLeg(T, seg, segFrom) {   // a new floor leg: count from its start, and wait at each corner for the turn (T1-S10)
   Object.assign(T, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom, hold: false, ci: 0,
-    corners: seg.steps.filter((x) => x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn').map((x) => ({ s: x.s0, icon: x.icon })) });
+    // only clear turns hold the dot: a bend under 60° may never show as a gyroscope turn (those count from 50°)
+    corners: seg.steps.filter((x) => (x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn') && Math.abs(x.turn ?? 90) >= 60)
+      .map((x) => ({ s: x.s0, icon: x.icon })) });
 }
 // The dot (T1-S10): at the tracker's distance, but it doesn't go round the next corner until the phone has turned there.
 // web-0.3.1 followed the route's line by distance alone, so the dot turned the corner as soon as the step count got there.
