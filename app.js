@@ -11,8 +11,16 @@ const CAL_DIST = 53.2;                    // m: floor 6, corridor at the central
 const DEFAULT_STEP = 0.68;               // m: step length when nothing better is known (0.415 × 1.65 m)
 const WALK = 1.25;                       // m/s, walking speed used for time estimates
 const LIFT_S = 60;                       // s added for the lift ride
-const ENTRANCE_R = 15;                   // m: a GPS fix this close to the entrance counts as arrived outdoors
+const ENTRANCE_R = 4;                    // m: the filtered progress this close to the entrance, with a fix near it, = arrived (was 15 m)
 const OFFROUTE_M = 25, OFFROUTE_S = 10;  // off route: farther than this, for this long → re-plan
+// outdoor position in real walk mode (T1-S1, T1-S2, T1-S3): GPS fixes filtered along the planned route
+const GPS_MAX_ACC = 50;                  // m: a fix less accurate than this doesn't move the marker
+const GPS_BACK = 40, GPS_AHEAD = 70;     // m: a fix is matched to the route only this far behind / ahead of the current progress
+const GPS_Q = 0.5;                       // m² a second: how fast the progress gets uncertain between fixes
+const GPS_COAST_S = 15;                  // s: with no steps, keep moving at the last speed for at most this long after a fix
+const GPS_LOST_S = 20;                   // s: no usable fix for this long = GPS lost (e.g. under a roof); steps alone may then reach the door
+let TEST_NOW = null;                     // desk checks only (feedback/checks): a simulated clock in ms; null = the real clock
+const nowMs = () => (TEST_NOW == null ? Date.now() : TEST_NOW);
 const N7_FLOORS = ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1', 'B'];
 const OCR_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
@@ -75,6 +83,21 @@ function project(line, ll) {          // closest point of an outdoor line to a l
     const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
     const d = Math.hypot(a[0] + vx * t - p[0], a[1] + vy * t - p[1]);
     if (d < best.d) best = { s: line.cum[i - 1] + t * Math.sqrt(L2), d };
+  }
+  return best;
+}
+function projectNear(line, ll, s0, back, ahead) {   // the same, but searching the route only from s0 − back to s0 + ahead
+  const p = xy(ll), lo = Math.max(0, s0 - back), hi = Math.min(line.len, s0 + ahead);
+  let best = { s: lo, d: Infinity };
+  for (let i = 1; i < line.pts.length; i++) {
+    const c0 = line.cum[i - 1], c1 = line.cum[i];
+    if (c1 < lo || c0 > hi) continue;
+    const a = xy(line.pts[i - 1]), b = xy(line.pts[i]);
+    const vx = b[0] - a[0], vy = b[1] - a[1], L = Math.hypot(vx, vy) || 1;
+    const t0 = Math.max(0, (lo - c0) / L), t1 = Math.min(1, (hi - c0) / L);
+    const t = Math.max(t0, Math.min(t1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / (L * L)));
+    const d = Math.hypot(a[0] + vx * t - p[0], a[1] + vy * t - p[1]);
+    if (d < best.d) best = { s: c0 + t * L, d };
   }
   return best;
 }
@@ -611,7 +634,8 @@ function stepIcon(icon) {
 }
 
 // ---------- navigation
-const NAV = { r: null, phase: 'out', s: 0, playing: true, speed: 8, timer: 0, watch: null, lost: false, lostDone: false, offSince: 0, trk: null };
+const NAV = { r: null, phase: 'out', s: 0, playing: true, speed: 8, timer: 0, watch: null, lost: false, lostDone: false, offSince: 0, trk: null,
+              g: null, gtimer: 0 };   // g: the outdoor GPS filter (real walk); gtimer: redraws the marker between fixes
 function newTracker() {
   // the browser tracker (real walk mode): steps move the dot along the planned indoor route; turns snap it to the route's corners.
   // segFrom: where the current segment is counted from: 'lift', 'sign', or 'sign at door' (a sign photo put the tester at the destination)
@@ -642,6 +666,7 @@ function startNav(route) {
   NAV.phase = route.out.len > 3 ? 'out' : route.inn ? 'lift' : 'done';
   if (S.mode === 'real') { Motion.start(); TestLog.recStart(); }
   NAV.trk = newTracker();
+  NAV.trk.Lout = chooseStepLength(NAV.trk)[0];       // outdoors, steps carry the marker between GPS fixes
   TestLog.event('nav_start', { mode: S.mode, tracker: NAV.trk.on, motion: Motion.permission(), ...routeInfo(route) });
   show('nav');
   $('#simbadge').hidden = $('#simctl').hidden = S.mode !== 'sim';
@@ -660,7 +685,11 @@ function startNav(route) {
       const now = performance.now(), dt = Math.min(0.5, (now - last) / 1000); last = now;
       if (NAV.playing && !NAV.lost && (NAV.phase === 'out' || NAV.phase === 'in')) advance(WALK * NAV.speed * dt);
     }, 100);
-  } else startGPS();
+  } else {
+    gpsInit();
+    NAV.gtimer = setInterval(() => { if (NAV.phase === 'out') render(); }, 1000);   // keeps the marker moving between fixes
+    startGPS();
+  }
   render();
 }
 function drawIndoorRoute() {
@@ -672,6 +701,7 @@ function drawIndoorRoute() {
 }
 function stopNav() {
   clearInterval(NAV.timer); NAV.timer = 0;
+  clearInterval(NAV.gtimer); NAV.gtimer = 0;
   if (NAV.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(NAV.watch);
   NAV.watch = null;
   $('#arrivecard').hidden = true; $('#atdoor').hidden = true; $('#trackbadge').hidden = true;
@@ -725,7 +755,11 @@ function onStep(ev) {
   if (CAL.on) { calStep(); return; }
   const T = NAV.trk;
   if (!NAV.r || !T || S.mode !== 'real') return;
-  if (NAV.phase === 'out') { T.outSteps++; return; }
+  if (NAV.phase === 'out') {
+    T.outSteps++;
+    if (NAV.g && NAV.g.onRoute) { gpsStep(T.Lout); if (!gpsAtEntrance()) render(); }
+    return;
+  }
   if (NAV.phase !== 'in' || NAV.lost) return;
   T.inSteps++; T.segSteps++;
   T.sRaw += T.L;
@@ -805,10 +839,11 @@ function render() {
   const st = r.steps, i = curStepIndex(), step = st[i];
   let pos;
   if (NAV.phase === 'out') {
-    pos = S.mode === 'real' && S.me ? S.me : along(r.out, NAV.s);
+    const real = S.mode === 'real';
+    pos = real ? outdoorMe(nowMs()) : along(r.out, NAV.s);
     if ($('#cmap').hidden) showMap('campus');
     C.me.setIcon(meIcon(false)); C.me.setLatLng(pos).addTo(cmap);
-    cmap.panTo(pos, { animate: false });
+    cmap.panTo(pos, real ? { animate: true, duration: 0.6, easeLinearity: 0.9 } : { animate: false });   // real walk: glide, not jump
     $('#floorpill').hidden = true;
   } else if (r.inn) {
     pos = along(r.inn, NAV.phase === 'lift' ? 0 : NAV.s);
@@ -862,18 +897,82 @@ function startGPS() {
 }
 function onFix(pos) {
   S.me = [pos.coords.latitude, pos.coords.longitude]; S.acc = pos.coords.accuracy;
-  if (NAV.phase !== 'out') return;                     // indoors GPS is not used
-  const pr = project(NAV.r.out, S.me);
+  if (NAV.phase !== 'out' || !NAV.g) return;            // indoors GPS is not used
+  const t = nowMs(), pr = project(NAV.r.out, S.me), f = gpsFix(S.me, S.acc, t);
   TestLog.event('gps', { lat: +S.me[0].toFixed(6), lon: +S.me[1].toFixed(6), acc: Math.round(S.acc), s: +pr.s.toFixed(1), off: +pr.d.toFixed(1),
+                         sw: +f.z.s.toFixed(1), d: +f.z.d.toFixed(1), sf: +NAV.g.s.toFixed(1), used: f.used, why: f.why || undefined,
                          steps: NAV.trk ? NAV.trk.outSteps : null });
-  if (NAV.trk && !NAV.trk.gps0 && S.acc < 30) NAV.trk.gps0 = { s: Math.max(NAV.s, Math.min(pr.s, NAV.s + 60)), steps: NAV.trk.outSteps };
-  if (pr.d > OFFROUTE_M && S.acc < 40) {
-    if (!NAV.offSince) NAV.offSince = Date.now();
-    else if (Date.now() - NAV.offSince > OFFROUTE_S * 1000) { reroute(); return; }
+  if (f.used && NAV.trk && !NAV.trk.gps0 && S.acc < 30) NAV.trk.gps0 = { s: f.z.s, steps: NAV.trk.outSteps };   // GPS-only distance, for the step length
+  if (f.z.d > OFFROUTE_M && S.acc < 40) {
+    if (!NAV.offSince) NAV.offSince = t;
+    else if (t - NAV.offSince > OFFROUTE_S * 1000) { reroute(); return; }
   } else NAV.offSince = 0;
-  NAV.s = Math.max(NAV.s, Math.min(pr.s, NAV.s + 60));
-  if (NAV.r.out.len - NAV.s < ENTRANCE_R) { NAV.s = NAV.r.out.len; if (NAV.r.inn) enterLift(); else arrive(); return; }
-  render();
+  if (!gpsAtEntrance()) render();
+}
+// ---- the outdoor filter (T1-S1, T1-S2, T1-S3)
+// web-0.3.1 drew the marker at each raw fix (so it showed GPS's scatter), and took the progress from the closest point anywhere
+// on the route: forward only and up to 60 m a fix, so one stray fix near a later part of the route moved it ahead for good.
+// Nothing moved it between fixes, so it froze where fixes stop (e.g. under the N7 bridge).
+// Now the progress along the route is a one-dimensional Kalman filter: steps (or, without motion sensors, the last speed) move it
+// between fixes; a fix is matched to the route only near the current progress; a fix that disagrees by much more than its stated
+// accuracy is dropped, unless three in a row agree. The marker sits on the route at that progress, or at the fix when the tester
+// has clearly left the route.
+function gpsInit() {
+  NAV.g = { s: 0, P: 4, v: 0, t: null, out: 0, offN: 0, fix: null, acc: null, fixT: null, usedT: null, zs: null, zt: null, stepAt: null, onRoute: true };
+}
+function gpsStep(L) {                     // one step outdoors: dead reckoning along the route
+  const G = NAV.g;
+  G.s = Math.min(NAV.r.out.len, G.s + L); G.P += (0.2 * L) ** 2; G.stepAt = nowMs();
+  NAV.s = G.s;
+}
+function gpsFix(ll, acc, t) {
+  const G = NAV.g, line = NAV.r.out;
+  if (G.t != null) {                      // predict to now: steps already moved G.s; without recent steps, coast at the last speed
+    const dt = Math.max(0, (t - G.t) / 1000);
+    if (!(G.stepAt && t - G.stepAt < 3000)) G.s = Math.min(line.len, G.s + G.v * Math.min(dt, GPS_COAST_S));
+    G.P += GPS_Q * dt;
+  }
+  G.t = t; G.fix = ll; G.acc = acc; G.fixT = t;
+  const z = projectNear(line, ll, G.s, GPS_BACK, GPS_AHEAD);
+  G.offN = z.d > Math.max(20, 1.5 * acc) ? G.offN + 1 : 0;
+  G.onRoute = G.offN < 3;                 // one or two stray fixes don't pull the marker off the route; three in a row do
+  let used = false, why = null;
+  if (acc > GPS_MAX_ACC) why = 'inaccurate';
+  else {
+    const R = acc * acc, y = z.s - G.s, gate = 3 * Math.sqrt(G.P + R) + 5;
+    const stray = Math.abs(y) > gate || z.d > 3 * acc + 10;
+    if (stray && ++G.out < 3) why = 'outlier';
+    else {
+      if (stray) { G.s = z.s; G.P = R; }                               // three in a row agree: the tester really is there
+      else { const K = G.P / (G.P + R); G.s += K * y; G.P *= 1 - K; }
+      G.out = 0; used = true; G.usedT = t;
+      if (G.zs != null && t > G.zt) G.v = 0.8 * G.v + 0.2 * Math.max(0, Math.min(2.5, (z.s - G.zs) / ((t - G.zt) / 1000)));
+      G.zs = z.s; G.zt = t;
+    }
+  }
+  G.s = Math.max(0, Math.min(line.len, G.s));
+  NAV.s = G.s;
+  return { used, why, z };
+}
+function gpsAtEntrance() {                // the tester is at the building entrance: a fix near the door, or steps alone when GPS is lost
+  const G = NAV.g, line = NAV.r.out;
+  if (!G || NAV.phase !== 'out') return false;
+  const t = nowMs(), end = line.pts[line.pts.length - 1];
+  const dFix = G.fix && t - G.fixT < 10000 ? dLL(G.fix, end) : Infinity;
+  const close = G.s >= line.len - ENTRANCE_R && dFix < Math.max(20, (G.acc || 0) + 8);   // filtered progress at the door, and a fix agrees
+  const lost = !G.usedT || t - G.usedT > GPS_LOST_S * 1000;
+  if (!close && !(lost && G.s >= line.len - 3)) return false;                            // GPS lost (e.g. a roof): steps alone
+  TestLog.event('entrance', { sf: +G.s.toFixed(1), d_fix: Number.isFinite(dFix) ? +dFix.toFixed(1) : null, gps_lost: lost });
+  NAV.s = line.len; if (NAV.r.inn) enterLift(); else arrive();
+  return true;
+}
+function outdoorMe(t) {                   // where the marker is drawn in real walk mode
+  const G = NAV.g, line = NAV.r.out;
+  if (!G || G.t == null) return G && G.stepAt ? along(line, G.s) : S.me || line.pts[0];
+  if (!G.onRoute && G.fix) return G.fix;
+  let s = G.s;
+  if (!(G.stepAt && t - G.stepAt < 3000)) s += G.v * Math.min(GPS_COAST_S, Math.max(0, (t - G.t) / 1000));
+  return along(line, Math.min(s, line.len));
 }
 function reroute() {
   const r = planRoute(NAV.r.dest, NAV.r.kind);

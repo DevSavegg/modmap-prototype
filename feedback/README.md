@@ -33,9 +33,9 @@ Every piece of feedback gets an ID, and every change made because of it says whi
 
 | ID | Feedback (short) | Source | Decision | Commits |
 |---|---|---|---|---|
-| T1-S1 | The marker wobbles and doesn't follow the road | write-up | fix | pending |
-| T1-S2 | The marker freezes in places, e.g. by the N7 bridge | write-up | fix | pending |
-| T1-S3 | The marker jumps ahead or runs faster than the user, and the app "arrived" early | write-up | fix | pending |
+| T1-S1 | The marker wobbles and doesn't follow the road | write-up | fix | see `git log --grep T1-S1` |
+| T1-S2 | The marker freezes in places, e.g. by the N7 bridge | write-up | fix | see `git log --grep T1-S2` |
+| T1-S3 | The marker jumps ahead or runs faster than the user, and the app "arrived" early | write-up | fix | see `git log --grep T1-S3` |
 | T1-S4 | Starting inside the building, the route goes out and back in | write-up, lead | fix | pending |
 | T1-S5 | Walking into the building shows floor 6 and the lift step at once, not the floor the tester is on | write-up, lead | fix | pending |
 | T1-S6 | The position shows on a floor the tester isn't on | write-up | fix | pending |
@@ -74,6 +74,28 @@ Each item gives what was reported, the cause found, the change made, and the bef
   - The progress along the route was the closest point anywhere on the route. It could only move forward, and up to 60 m per fix. So one bad fix near a later part of the route moved it ahead for good, and it then sat there until the tester caught up.
   - Nothing moved the marker between fixes. Under the bridge, where fixes stop, it froze.
   - Arrival at the entrance needed only that progress to be within 15 m of the end.
+- **Change:**
+  - **Filtered progress:** the progress along the route is a one-dimensional Kalman filter.
+    - Steps move it between fixes. Without motion sensors, it keeps moving at the last speed for up to 15 s.
+    - A fix is matched to the route only from 40 m behind to 70 m ahead of the current progress.
+    - A fix that disagrees by much more than its stated accuracy, or lies far off the path, is dropped, unless three in a row agree.
+  - **Marker:** it is drawn on the route at that progress. It leaves the route only after three off-path fixes in a row, and the map glides to it instead of jumping.
+  - **Entering the building:** the app switches to indoors only when the filtered progress is within 4 m of the entrance and a fresh fix is within 20 m of it. If GPS is lost (no usable fix for 20 s), steps alone can carry the tester to the door.
+  - **Logs:** each `gps` entry now also records the filtered progress (`sf`), the progress matched near the walker (`sw`), the distance from the path (`d`), and whether the fix was used, with the reason if not.
+- **Check:** [`checks/gps.js`](checks/gps.js) replays one simulated walk with seed 7, on the scenario-2 route from S2 to SCL607 (405 m), including 25 s with no fixes.
+
+  | Measure | Before (web-0.3.1) | After, step counter on | After, no motion sensors |
+  |---|---|---|---|
+  | Marker error, mean / 95th percentile | 9.1 / 31.8 m | 2.8 / 6.2 m | 4.3 / 10.4 m |
+  | Marker off the path, mean | 4.6 m | 0 m | 0 m |
+  | Most ahead of / behind the walker | 46 / 65 m | 6 / 8 m | 7 / 20 m |
+  | Longest freeze while walking | 22.5 s | 0 s | 8 s |
+  | Switched to indoors | 33 m before the door | 1.1 s after reaching it | 1.6 s after reaching it |
+
+- **Limits:**
+  - This is a simulated walk, and the GPS error model is an assumption.
+  - The next walking test should compare both builds on the same route. The new log fields show what the filter did with each fix.
+  - Without motion sensors, a gap of more than 15 s still freezes the marker for the rest of the gap.
 
 #### T1-S4 to T1-S7: indoor routing and floors
 - **Reported:** starting inside the building gives a route out of the building and back in. Walking in shows floor 6 and the lift step straight away, and the dot sits on a floor the tester isn't on.
