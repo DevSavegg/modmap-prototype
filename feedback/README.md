@@ -31,22 +31,24 @@ Every piece of feedback gets an ID, and every change made because of it says whi
 - This round acts on the system items and the log findings, not on the UI/UX items.
 - Separately, the UI is brought in line with the team's Figma design (T1-R2).
 
+**Result:** released as **web-0.4.0** on 17 Nov 2026 (tag `web-0.4.0`). Test runs from it are logged with that version.
+
 | ID | Feedback (short) | Source | Decision | Commits |
 |---|---|---|---|---|
-| T1-S1 | The marker wobbles and doesn't follow the road | write-up | fix | see `git log --grep T1-S1` |
-| T1-S2 | The marker freezes in places, e.g. by the N7 bridge | write-up | fix | see `git log --grep T1-S2` |
-| T1-S3 | The marker jumps ahead or runs faster than the user, and the app "arrived" early | write-up | fix | see `git log --grep T1-S3` |
-| T1-S4 | Starting inside the building, the route goes out and back in | write-up, lead | fix | pending |
-| T1-S5 | Walking into the building shows floor 6 and the lift step at once, not the floor the tester is on | write-up, lead | fix | pending |
-| T1-S6 | The position shows on a floor the tester isn't on | write-up | fix | pending |
-| T1-S7 | Indoor GPS is unreliable; unclear if it's GPS or the routing | write-up | fix | pending |
-| T1-S8 | After "ถึงชั้น 6 แล้ว" (reached floor 6), the dot starts nearer the lift lobby than the tester really is | lead | fix | pending |
-| T1-S9 | Indoors, the dot moves faster than the tester | lead | fix | pending |
-| T1-S10 | The dot turns the corner before the tester (phone) has turned | lead | fix | pending |
-| T1-S11 | The camera opens with no explanation, and testers didn't know what to photograph | write-up | fix | pending |
-| T1-S12 | Testers want to tap the map to pick a place or drop a pin | write-up | add | pending |
-| T1-S13 | The map and marker don't turn with the tester's heading | write-up (already planned) | add | pending |
-| T1-D1 | Every arrival at SCL607 came 5–16 m before the route's end | test logs | fix | pending |
+| T1-S1 | The marker wobbles and doesn't follow the road | write-up | fixed | e75c25e |
+| T1-S2 | The marker freezes in places, e.g. by the N7 bridge | write-up | fixed | e75c25e |
+| T1-S3 | The marker jumps ahead or runs faster than the user, and the app "arrived" early | write-up | fixed | e75c25e |
+| T1-S4 | Starting inside the building, the route goes out and back in | write-up, lead | fixed | efa321b |
+| T1-S5 | Walking into the building shows floor 6 and the lift step at once, not the floor the tester is on | write-up, lead | fixed | efa321b, fbbd2a8 |
+| T1-S6 | The position shows on a floor the tester isn't on | write-up | fixed | efa321b |
+| T1-S7 | Indoor GPS is unreliable; unclear if it's GPS or the routing | write-up | fixed | efa321b |
+| T1-S8 | After "ถึงชั้น 6 แล้ว" (reached floor 6), the dot starts nearer the lift lobby than the tester really is | lead | fixed | 643ef79 |
+| T1-S9 | Indoors, the dot moves faster than the tester | lead | fixed | 643ef79 |
+| T1-S10 | The dot turns the corner before the tester (phone) has turned | lead | fixed | 643ef79, fbbd2a8 |
+| T1-S11 | The camera opens with no explanation, and testers didn't know what to photograph | write-up | fixed | a335016 |
+| T1-S12 | Testers want to tap the map to pick a place or drop a pin | write-up | added | 1e2e80c |
+| T1-S13 | The map and marker don't turn with the tester's heading | write-up (already planned) | added | 82b2d45 (labels: 1fb653c) |
+| T1-D1 | Every arrival at SCL607 came 5–16 m before the route's end | test logs | fixed | efa321b (code), 0a1c942 (data) |
 | T1-D2 | A partial calibration walk was accepted (0.95 m steps) | test logs | fixed | 6d3689a |
 | T1-D3 | A range sign ("601-607") was read as one room | test logs | fixed | 6d3689a |
 | T1-D4 | A sign photo at the destination counted as tracker error | test logs | fixed | 6d3689a |
@@ -60,8 +62,8 @@ Every piece of feedback gets an ID, and every change made because of it says whi
 | T1-U6 | The header and buttons are too large for a phone | write-up | not this round | none |
 | T1-U7 | The X button cancels navigation, but looks like "close" | write-up | not this round | none |
 | T1-U8 | No how-to guide | write-up | not this round | none |
-| T1-R1 | Add every N7 floor | lead | do | pending |
-| T1-R2 | Match the in-app UI to the Figma design | lead | do | pending |
+| T1-R1 | Add every N7 floor | lead | done | 0a1c942, fbbd2a8 |
+| T1-R2 | Match the in-app UI to the Figma design | lead | done | c343164, 194e126, 1fb653c, 264e6ad, ffe64d0 |
 
 ### Details
 
@@ -114,7 +116,10 @@ Each item gives what was reported, the cause found, the change made, and the bef
   | Trip | Before (web-0.3.1) | After |
   |---|---|---|
   | A. Inside N7 on floor 2, to SCL607 | 12 m outdoors first. The map shows the campus, then floor 6 + lift card, then floor 6 | No outdoor part. The map shows floor 2 + lift card, then floor 6 |
-  | B. From the S2 car park to SCL607 | The campus, then floor 6 + lift card at the entrance | See T1-R1: with the ground-floor plan, the campus, then floor 1 to the lift, then floor 6 |
+  | B. From the S2 car park to SCL607 | The campus, then floor 6 + lift card at the entrance | The campus, then floor 1 to the lift, then floor 1 + lift card, then floor 6 (with the floor plans of T1-R1) |
+  | C. Floor-6 lift to SCL607 (T1-D1) | 27.2 m, to the far door | 15.2 m, to the nearer of its two doors |
+
+  - With the ground-floor plan, the way from the main door to the lifts is 10.0 m through the lift lobby's side door, instead of 19.6 m round by the corridor (commit fbbd2a8).
 
 #### T1-S8, T1-S9, T1-S10, T1-D1: indoor tracker
 - **Reported:**
@@ -157,6 +162,12 @@ Each item gives what was reported, the cause found, the change made, and the bef
   | A. Walker's distance from the door when the dot got there | 0.8 m | 2.4 m |
 
   In walk A the old build ends closer only by chance: it started 4.9 m behind, and its too-long steps made up the gap.
+
+  On the 15.2 m route that T1-D1 gives, the same walks in web-0.4.0 give:
+  - Walk A: the dot starts 0.3 m ahead and gets at most 0.9 m ahead; the walker is 1.4 m from the door when the dot gets there.
+  - Walk B: the dot starts on the walker and gets at most 1.1 m ahead; the walker is 2.0 m from the door when the dot gets there.
+  - Neither walk turns the corner early.
+  - Commit fbbd2a8 made only clear turns (60° or more) hold the dot, so the 43° bend on the way in from the main door doesn't stop it.
 - **Limits:**
   - These are simulated walks.
   - The pace model (step length proportional to pace, within 0.7–1.1×) is an assumption. Test it against the next walking test: its logs record the pace and length of every step.
@@ -229,8 +240,80 @@ Each item gives what was reported, the cause found, the change made, and the bef
   - Not yet tried on real phones. Compass readings indoors are disturbed by steel, which is another reason the indoor map follows the route, not the compass.
 
 #### T1-R1: every N7 floor
+- **Requested:** the lead asked for every N7 floor, now that the prototype's plans no longer wait on a sensor survey.
+- **Before (web-0.3.1):** only floors 2 and 6 had plans. The other 379 rooms of N7 routed to the building entrance and then named the floor.
+- **Change:** `data/n7.json` (version 2) holds all 11 levels (B, 1–10) in the same simplified form as before: room boxes, the corridor and door positions, no walls.
+  - **Drafts:** floors B, 1, 3–5 and 7–10 are automatic drafts from the same blueprints (`draft: true`).
+  - **Reviewed:** floors 2 and 6 are the maps the three reviewers checked. They are unchanged except for two additions:
+    - `lift.box`, the whole lift and stair core, at the same x on every floor;
+    - `doors[code].more`, a room's other corridor doors (T1-D1).
+  - **Floor 1:** holds the main entrance (south side, x 69) and the short way in to the lifts, through the lift lobby's south-east double door (`lift_via`).
+  - **places.json:** has all 429 N7 rooms, of which 391 can be routed to. The rest are corridors or the car park itself, or rooms whose label isn't on the drawing.
+  - **campus.json:** unchanged.
+- **Where the extraction lives:** the N7-Pilot folder, outside this repo:
+  - `tools/extract_floor.py`, with a config for every sheet;
+  - `data/map/floor*/`;
+  - the QA report `data/map/ALL_FLOORS_QA.md`.
+
+  | Floor | Layout | Rooms | Mapped | Approximate door |
+  |---|---|---|---|---|
+  | B | car park + south-east wing | 19 | 16 | 9 |
+  | 1 | corridor + open hall + south wing | 55 | 47 | 20 |
+  | 2 | reviewed | 48 | 31 | 13 |
+  | 3 | single corridor | 34 | 33 | 1 |
+  | 4 | single corridor | 36 | 35 | 1 |
+  | 5 | single corridor + 3 office suites | 65 | 64 | 1 |
+  | 6 | reviewed | 30 | 28 | 6 |
+  | 7 | single corridor | 29 | 28 | 1 |
+  | 8 | single corridor + suite | 42 | 41 | 3 |
+  | 9 | partial floor (west half is roof) | 32 | 31 | 13 |
+  | 10 | partial floor | 39 | 37 | 4 |
+
+- **Check:** the extractor still reproduces floors 2 and 6 byte for byte (map hashes unchanged), and `campus.json` and the old `places.json` entries are byte-identical.
+- **Limits, for the site check:**
+  - **Floor 1:**
+    - The way in through the lobby's south-east door (F1-D41).
+    - The wall across the east corridor at x 106.8 (N7-114…117 and N7-120…123 are approximate behind it).
+  - **Basement:** its south-east wing has no walkable link to the car park on the drawing.
+  - **Floor 9:** the suite offices have no doors drawn.
+  - **Drawing errors fixed in configuration:** a few mistyped labels on floors 3, 4 and 7.
+  - Every item is listed in the QA report.
+- **Publishing:** this publishes every N7 room code and type name in the same schematic form already public for floors 2 and 6.
 
 #### T1-R2: Figma alignment
+- **Requested:** the lead asked for the Figma design to be inspected carefully and the in-app UI refined to match, with every detail.
+- **How:** every one of the 39 frames on the Figma page "Prototype" was compared with the app. The audit, [`T1/R2/figma-audit.md`](T1/R2/figma-audit.md), found 131 differences: 26 must, 44 should and 61 minor.
+  - Missing icons were exported from the Figma file (4 asset calls) into `icons/`.
+- **Done:** 24 of the 26 musts, nearly all the shoulds, and most of the minors. The changes by area:
+  - **Tokens:** design tokens for colours, type, radii and shadows.
+  - **Search and home:** the search field and result rows (recent places first, with the clock icon), the chips with Figma's icons, the home buttons, and the "you" marker.
+  - **Route preview:** the origin/destination card, the 70 px route-mode buttons with Figma's icons, the route lines, the route sheet with its rules, and 80 px step rows.
+  - **Picker:** its header.
+  - **Navigation:**
+    - outdoor and indoor route bands, with the walked part pale indoors;
+    - floor plans: white surround, #e0e0e0 rooms with #757575 walls, a cream lift core, and lift and toilet tiles;
+    - the nav bar with its grab handle, 28 px minutes and Figma's close button;
+    - the compass button, the floor pill and the capsule floor menu.
+  - **Arrival:** the arrival card with the pin-and-tick icon, and the arrived sheet.
+  - **Place sheet and dialogs:** the place sheet, the dialogs (one scrim, Figma's colours and sizes), and the base map's colours.
+- **Not done, for the lead to decide:**
+  - **The 4th quick-search chip** still reads "หอพัก". Figma says "หอหญิง", but the category holds S5/S6 (บ้านธรรมรักษา 1 and 2).
+  - **The ✕ on the route-preview card** keeps its "back" job, drawn where Figma has a swap control. A working swap there would be a new flow.
+  - **Room photos** are not added. Figma uses one placeholder photo for every room, and there are no real ones, so the floor-plan thumbnail stays.
+- **Small behaviour changes that came with it:**
+  - Enter in the search field opens the top row shown, which can be a recent place.
+  - Recents keep the label the tester chose, stored in `mm_recent_label`.
+  - The floor menu lists only floors that have a plan.
+- **Check:** 13 screens before (web-0.3.1) and after, at 402×874, in [`T1/R2/`](T1/R2/) as `<screen>-before.jpg` and `<screen>-after.jpg`.
+- **Overlap with the testers' UI items (not acted on):** following Figma goes against two of them:
+  - **T1-U6 (too large):** Figma's minutes are 28 px, bigger than before.
+  - **T1-U7:** Figma keeps the ✕ on the navigation bar.
+  
+  It also changes how T1-U5's icons look: these are now Figma's own icons. The team can weigh these against the testers' comments in the design discussion.
+- **Known leftovers:**
+  - Room labels overlap in narrow rooms.
+  - The thumbnail's room label touches its caption.
+  - For about 0.6 s at arrival, as the map turns back, labels can sit at an angle.
 
 ### Not acted on this round (UI/UX)
 

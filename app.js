@@ -111,7 +111,8 @@ let CAMPUS, PLACES, N7, G;
 const BYID = {};
 async function loadData() {
   const [c, p, n] = await Promise.all(['campus', 'places', 'n7'].map((f) =>
-    fetch(`data/${f}.json`).then((r) => { if (!r.ok) throw new Error(f); return r.json(); })));
+    fetch(`data/${f}.json?v=${(window.MM_CONFIG && window.MM_CONFIG.APP_VERSION) || ''}`)     // a new version never reads last version's cached data
+      .then((r) => { if (!r.ok) throw new Error(f); return r.json(); })));
   CAMPUS = c; PLACES = p; N7 = n;
   for (const x of PLACES) BYID[x.id] = x;
   const adj = c.graph.nodes.map(() => []);
