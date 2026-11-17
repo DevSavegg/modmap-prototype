@@ -257,17 +257,17 @@ function initMaps() {
   cmap.attributionControl.setPrefix(false).addAttribution('© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors');
   const R = L.canvas({ padding: 0.4 });
   const base = L.layerGroup().addTo(cmap);
-  for (const p of CAMPUS.green) L.polygon(p, { renderer: R, stroke: false, fillColor: '#d4e8ca', fillOpacity: 1, interactive: false }).addTo(base);
-  for (const p of CAMPUS.water) L.polygon(p, { renderer: R, stroke: false, fillColor: '#a9d6f0', fillOpacity: 1, interactive: false }).addTo(base);
-  for (const l of CAMPUS.waterlines) L.polyline(l, { renderer: R, color: '#a9d6f0', weight: 5, interactive: false }).addTo(base);
+  // base-map colours of the Figma mock-ups (F00–F02): green #c2f0d4, water #90d9ed, roads #c6d0da with no white casing, buildings #e7e8eb
+  for (const p of CAMPUS.green) L.polygon(p, { renderer: R, stroke: false, fillColor: '#c2f0d4', fillOpacity: 1, interactive: false }).addTo(base);
+  for (const p of CAMPUS.water) L.polygon(p, { renderer: R, stroke: false, fillColor: '#90d9ed', fillOpacity: 1, interactive: false }).addTo(base);
+  for (const l of CAMPUS.waterlines) L.polyline(l, { renderer: R, color: '#90d9ed', weight: 5, interactive: false }).addTo(base);
   const rank = { path: 0, minor: 1, major: 2 };
   const roads = [...CAMPUS.roads].sort((a, b) => rank[a.c] - rank[b.c]);
-  for (const r of roads) if (r.c !== 'path') L.polyline(r.pts, { renderer: R, color: '#ffffff', weight: r.c === 'major' ? 11 : 8, lineCap: 'round', interactive: false }).addTo(base);
   for (const r of roads) {
-    L.polyline(r.pts, { renderer: R, color: r.c === 'major' ? '#aebbcc' : r.c === 'minor' ? '#c3ccd8' : '#cfd6df',
+    L.polyline(r.pts, { renderer: R, color: r.c === 'major' ? '#b9c5d2' : r.c === 'minor' ? '#c6d0da' : '#cfd6df',
       weight: r.c === 'major' ? 8 : r.c === 'minor' ? 5 : 2.5, dashArray: r.c === 'path' ? '4 4' : null, lineCap: 'round', interactive: false }).addTo(base);
   }
-  for (const b of CAMPUS.buildings) L.polygon(b.poly, { renderer: R, color: '#cfcac2', weight: 1, fillColor: '#e3e0da', fillOpacity: 1, interactive: false }).addTo(base);
+  for (const b of CAMPUS.buildings) L.polygon(b.poly, { renderer: R, color: '#d6d8dd', weight: 1, fillColor: '#e7e8eb', fillOpacity: 1, interactive: false }).addTo(base);
   C.hl = L.layerGroup().addTo(cmap);
   C.labels = L.layerGroup();
   for (const p of PLACES) {
@@ -453,17 +453,20 @@ function choose(p, hit) {
   pushRecent(p, hit);
   if (S.listMode === 'pick') {
     if (S.pickField === 'from') { S.origin = { type: 'place', p }; $('#pick-from').value = titleOf(p); S.pickField = 'to'; $('#pick-to').focus(); renderPick(); return; }
-    S.place = p; openPreview(); return;
+    S.place = p; S.placeHit = { id: p.id, hit }; openPreview(); return;
   }
-  openPlace(p);
+  openPlace(p, hit);
 }
 
 // place sheet
-function openPlace(p) {
-  S.place = p;
+// Figma F09, F13: the search bar keeps the name the user searched ("Slope600"), the title is the room under that name
+// ("Slope600 (SCL216)", or "SCL216" when searched by code), and the pin on the map carries the room code
+function openPlace(p, hit) {
+  if (hit === undefined && S.placeHit && S.placeHit.id === p.id) hit = S.placeHit.hit;   // back from the route preview or navigation
+  S.place = p; S.placeHit = { id: p.id, hit };
   show('place'); showMap('campus'); $('#place').classList.remove('done');
-  $('#place-q').textContent = titleOf(p);
-  $('#place-title').textContent = titleOf(p);
+  $('#place-q').textContent = hit || titleOf(p);
+  $('#place-title').textContent = titleOf(p, hit);
   $('#place-sub').textContent = subOf(p, true);
   $('#place-thumb').innerHTML = thumbSVG(p);
   const b = buildingOf(p);
@@ -477,7 +480,7 @@ function openPlace(p) {
   if (b && b.c) {
     highlightBuilding(b);
     L.marker(b.c, { icon: pinIcon(), interactive: false }).addTo(C.pins);
-    L.marker(b.c, { icon: pinLabel(titleOf(p)), interactive: false }).addTo(C.pins);
+    L.marker(b.c, { icon: pinLabel(p.kind === 'room' || p.kind === 'coderoom' ? p.code : titleOf(p, hit)), interactive: false }).addTo(C.pins);
     cmap.setView(b.c, 18, { animate: false });
     cmap.panBy([0, 160], { animate: false });
   }
@@ -517,7 +520,7 @@ function onFloorTap(e) {                   // a room on the floor plan
 function highlightBuilding(b) {
   if (b.kind === 'pin') return;
   const poly = polyOf(b);
-  if (poly) L.polygon(poly.poly,{ color: '#fb8c3a', weight: 1.5, fillColor: '#fde3cc', fillOpacity: 1, interactive: false }).addTo(C.hl);
+  if (poly) L.polygon(poly.poly,{ color: '#ead9b5', weight: 1, fillColor: '#fcf8ef', fillOpacity: 1, interactive: false }).addTo(C.hl);   // Figma's cream campus block
 }
 function toggleLayers() {
   const p = S.place;
@@ -546,15 +549,15 @@ function thumbSVG(p) {
   const near = CAMPUS.buildings.filter((x) => dLL(x.c, b.c) < 110);
   const P = (ll) => { const q = xy(ll), o = xy(b.c); return [q[0] - o[0], -(q[1] - o[1])]; };
   let s = '<svg viewBox="-90 -55 180 110" preserveAspectRatio="xMidYMid slice" role="img" aria-label="ตำแหน่งอาคาร">';
-  s += '<rect x="-90" y="-55" width="180" height="110" fill="#eeeeec"/>';
+  s += '<rect x="-90" y="-55" width="180" height="110" fill="#f7f6f6"/>';
   if (p.kind === 'pin') {                  // a dropped pin: the buildings around it, and the pin
-    for (const x of near) s += `<polygon points="${x.poly.map(P).map((q) => q.join(',')).join(' ')}" fill="#e0ddd7" stroke="#cbc6be" stroke-width="0.6"/>`;
+    for (const x of near) s += `<polygon points="${x.poly.map(P).map((q) => q.join(',')).join(' ')}" fill="#e7e8eb" stroke="#d6d8dd" stroke-width="0.6"/>`;
     return s + '<circle cx="0" cy="0" r="4" fill="#fb8c3a" stroke="#fff" stroke-width="1.5"/></svg>';
   }
   const hit = near.reduce((best, x) => (dLL(x.c, b.c) < best.d ? { d: dLL(x.c, b.c), x } : best), { d: Infinity, x: null }).x;
   for (const x of near) {
     const pts = x.poly.map(P).map((q) => q.join(',')).join(' ');
-    s += `<polygon points="${pts}" fill="${x === hit ? '#fde3cc' : '#e0ddd7'}" stroke="${x === hit ? '#fb8c3a' : '#cbc6be'}" stroke-width="${x === hit ? 1.2 : 0.6}"/>`;
+    s += `<polygon points="${pts}" fill="${x === hit ? '#fde3cc' : '#e7e8eb'}" stroke="${x === hit ? '#fb8c3a' : '#d6d8dd'}" stroke-width="${x === hit ? 1.2 : 0.6}"/>`;
   }
   if (b.entrance) { const e = P(b.entrance); s += `<circle cx="${e[0]}" cy="${e[1]}" r="3" fill="#fb8c3a"/><text x="${e[0] + 5}" y="${e[1] + 1.5}" font-size="6" fill="#fb8c3a" font-family="Kanit">${b.entrance_checked ? 'ทางเข้า' : 'ทางเข้า (โดยประมาณ)'}</text>`; }
   return s + `<text x="-86" y="-46" font-size="7" fill="#555" font-family="Kanit">${esc(b.code)} · ${esc(short(b.th, 26))}</text></svg>`;
@@ -1365,6 +1368,7 @@ function dialog({ ico = '', title, text = '', img = null, extra = [], buttons = 
   const im = $('#dlg-img'); im.hidden = !img; if (img) im.src = img;
   const ex = $('#dlg-extra'); ex.innerHTML = ''; extra.filter(Boolean).forEach((e) => ex.appendChild(e));
   const bb = $('#dlg-btns'); bb.innerHTML = ''; bb.className = `dlg-btns${buttons.length === 1 ? ' one' : ''}`;
+  $('.dlg').classList.remove('busy');
   for (const b of buttons) {
     const el = document.createElement('button'); el.className = `btn ${b.ghost ? 'ghost' : 'primary'}`; el.textContent = b.t;
     el.addEventListener('click', b.on); bb.appendChild(el);
@@ -1373,7 +1377,7 @@ function dialog({ ico = '', title, text = '', img = null, extra = [], buttons = 
 }
 const closeDialog = () => { $('#dlgwrap').hidden = true; };
 function linkBtn(t, on) { const b = document.createElement('button'); b.className = 'linkbtn'; b.textContent = t; b.addEventListener('click', on); return b; }
-const LOST_ICO = '<img src="icons/pin.svg" alt="" style="height:44px"><b style="font-size:40px;margin-left:2px">!</b>';
+const LOST_ICO = '<img src="icons/pin.svg" alt=""><b>!</b>';   // Figma Group 76: the pin and a #e65100 "!"
 function dlgLost(failed, why) {
   dialog({ ico: LOST_ICO, title: failed ? 'ไม่สามารถจับรูปถ่ายได้' : 'สัญญาณ GPS ขัดข้อง',
     text: why || 'กรุณาถ่ายรูปป้ายหน้าห้องที่ใกล้ที่สุดเพื่อทำการแทรกสัญญาณอีกครั้ง',
@@ -1479,6 +1483,7 @@ async function ocr(canvas) {
 async function readSign(img, w, h, previewUrl, src) {
   dialog({ ico: '<div class="ants"><img src="icons/ant4.svg" alt=""><img src="icons/ant3.svg" alt=""><img src="icons/ant2.svg" alt=""><img src="icons/ant1.svg" alt=""></div>',
     title: 'กำลังแทรกสัญญาณใหม่', text: 'กรุณารอสักครู่...', img: previewUrl });
+  $('.dlg').classList.add('busy');                     // Figma F35: the narrower "please wait" card
   const fl = curSeg().floor;
   const log = { at:new Date().toISOString(), floor: fl, tesseract: '', openthai: '', engine: null, room: null, cands: [] };
   let cands = [], loadFail = 0;
