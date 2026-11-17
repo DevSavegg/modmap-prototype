@@ -103,6 +103,18 @@ Each item gives what was reported, the cause found, the change made, and the bef
   - Every route started outdoors, at the campus path nearest the GPS fix.
   - The indoor part was one leg on the destination floor, starting in the lift. So at the entrance the app jumped straight to that floor and the lift step.
   - The app had no ground floor, so it couldn't show anything else.
+- **Change:** a route is now a list of segments, walked in order: outdoors, one floor at a time, and the lift between floors.
+  - **Inside already:** when GPS puts the tester at N7, the app asks whether they are inside and on which floor. The route then starts at that floor's lift lobby, with no outdoor part. Picking a room in N7 as the starting point starts at that room's door.
+  - **Entering:** with a plan of the entrance floor (T1-R1), the map shows that floor from the entrance to the lift. The lift card appears at the lift, still on the floor the tester is on. The destination floor appears only after "ถึงชั้น … แล้ว".
+  - **Dot:** it is drawn only on the floor the tester is on. Viewing another floor from the floor menu hides it.
+  - **Indoor GPS (T1-S7):** fixes are ignored indoors, as before, but the switch to indoors now happens at the door (T1-S3), not 15–33 m before it. A start inside is set by the tester's answer, not by indoor GPS.
+  - **Logs:** a `segment` entry marks the start of each segment, and `start_inside` records the tester's answer.
+- **Check:** [`checks/routes.js`](checks/routes.js) plans the same trips in either build and walks them in simulation, recording what the map shows at each stage.
+
+  | Trip | Before (web-0.3.1) | After |
+  |---|---|---|
+  | A. Inside N7 on floor 2, to SCL607 | 12 m outdoors first. The map shows the campus, then floor 6 + lift card, then floor 6 | No outdoor part. The map shows floor 2 + lift card, then floor 6 |
+  | B. From the S2 car park to SCL607 | The campus, then floor 6 + lift card at the entrance | See T1-R1: with the ground-floor plan, the campus, then floor 1 to the lift, then floor 6 |
 
 #### T1-S8, T1-S9, T1-S10, T1-D1: indoor tracker
 - **Reported:**

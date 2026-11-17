@@ -231,6 +231,8 @@ input { font: inherit; }
 .dlg-extra { display: grid; gap: 8px; margin-top: 6px; }
 .dlg-extra input { height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; text-align: center; font-size: 15px; }
 .dlg-extra .btn { height: 42px; font-size: 15px; }
+.floorgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.floorgrid .btn { height: 40px; font-size: 14px; padding: 0; background: var(--field); color: #333; }
 .dlg-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 .dlg-btns .btn { height: 42px; font-size: 15px; }
 .dlg-btns .btn.ghost { background: var(--field); color: #333; }

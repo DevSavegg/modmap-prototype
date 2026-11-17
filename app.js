@@ -226,7 +226,7 @@ function pushRecent(p) {
 
 // ---------- state
 const S = {
-  mode: 'sim', me: null, acc: null, scenario: null,
+  mode: 'sim', me: null, acc: null, meSrc: null, startIn: null, scenario: null,   // meSrc: 'gps' or 'set' (a scenario's start); startIn: {floor} inside N7
   place: null, origin: { type: 'me' }, routeKind: 'fast', route: null,
   pickField: 'to', listMode: 'search', viewFloor: null,
 };
@@ -287,7 +287,7 @@ function showMap(which) {
 }
 const fll = (p) => [p[1], p[0]];        // floor [x, y] → Leaflet CRS.Simple [lat, lng]
 
-function liftBox(F) { const cy = F.corridor.y; return [59.6, cy - 7.2, 66.4, cy - 1.7]; }
+function liftBox(F) { if (F.lift.box) return F.lift.box; const cy = F.corridor.y; return [59.6, cy - 7.2, 66.4, cy - 1.7]; }
 function drawFloor(fl, hitCode) {
   S.viewFloor = fl;
   C.floor.clearLayers(); C.fpins.clearLayers();
@@ -455,10 +455,8 @@ function openPlace(p) {
   placeMe();
 }
 function highlightBuilding(b) {
-  const poly = CAMPUS.buildings.reduce((best, x) => {
-    const d = dLL(x.c, b.c); return d < best.d ? { d, x } : best;
-  }, { d: Infinity, x: null }).x;
-  if (poly) L.polygon(poly.poly, { color: '#fb8c3a', weight: 1.5, fillColor: '#fde3cc', fillOpacity: 1, interactive: false }).addTo(C.hl);
+  const poly = polyOf(b);
+  if (poly) L.polygon(poly.poly,{ color: '#fb8c3a', weight: 1.5, fillColor: '#fde3cc', fillOpacity: 1, interactive: false }).addTo(C.hl);
 }
 function toggleLayers() {
   const p = S.place;
@@ -498,10 +496,23 @@ function thumbSVG(p) {
 }
 
 // ---------- route planning
+// A route is a list of segments, walked in order (T1-S4 to T1-S7):
+//   { type: 'out', pts, cum, len, steps }                 outdoors, along the campus paths
+//   { type: 'in', floor, pts, cum, len, from, to, steps } indoors on one floor: the corridor, plus short spurs to a lift, a door or the entrance
+//   { type: 'lift', from, to, len: 0, steps }             the lift between two floors
+// web-0.3.1 had exactly one outdoor leg and one indoor leg on the destination floor. So every route started outdoors (from inside
+// the building it went out and back in), and at the entrance the app jumped straight to the destination floor and its lift step.
+const EF = () => N7.entrance_floor || '1';                       // the floor with the building's main entrance
+const floorRank = (f) => (f === 'B' ? 0 : +f);
 function originInfo() {
   if (S.origin.type === 'place') {
-    const b = buildingOf(S.origin.p);
-    return { ll: b.entrance, node: b.entrance_node, label: titleOf(S.origin.p) };
+    const p = S.origin.p;
+    if (p.kind === 'room' && p.mapped && p.building === N7.building && N7.floors[p.floor]) return { inN7: { floor: p.floor, code: p.id }, label: titleOf(p) };
+    const b = buildingOf(p);
+    return { ll: b.entrance, node: b.entrance_node, label: titleOf(p) };
+  }
+  if (S.startIn && N7.floors[S.startIn.floor]) {                  // the tester said they are inside N7, on this floor
+    return { inN7: { floor: S.startIn.floor }, ll: S.me, label: `ตำแหน่งของคุณ (ชั้น ${S.startIn.floor})` };
   }
   return { ll: S.me, node: null, label: 'ตำแหน่งของคุณ' };
 }
@@ -520,40 +531,53 @@ function legsOf(P, minTurn, minLeg) {
 }
 const TURN_T = { straight: 'เดินตรง', left: 'เลี้ยวซ้าย', right: 'เลี้ยวขวา', uturn: 'หันหลังกลับ' };
 function turnIcon(t, first) { if (first || Math.abs(t) < 30) return 'straight'; if (Math.abs(t) > 150) return 'uturn'; return t > 0 ? 'right' : 'left'; }
-function legSteps(legs, phase, firstTitle) {
+function legSteps(legs, firstTitle) {
   let s0 = 0;
   return legs.map((g, i) => {
     const icon = turnIcon(g.turn, i === 0);
-    const st = { icon, title: i === 0 && firstTitle ? firstTitle : TURN_T[icon], len: g.L, s0, s1: s0 + g.L, phase };
+    const st = { icon, title: i === 0 && firstTitle ? firstTitle : TURN_T[icon], len: g.L, s0, s1: s0 + g.L };
     s0 += g.L; return st;
   });
 }
-function indoorPlan(floor, code, fromX) {
-  const F = N7.floors[floor], cy = F.corridor.y, door = F.doors[code];
-  if (!door) return null;
-  const pts = fromX == null ? [[63, cy - 3.2], [63, cy]] : [[fromX, cy]];
-  if (Math.abs(door.x - pts[pts.length - 1][0]) > 0.3) pts.push([door.x, cy]);
-  let sideTxt = '';
-  if (door.via) for (const v of door.via) pts.push(v);
-  else {
-    const walkDir = Math.sign(door.x - (fromX == null ? 63 : fromX));
-    const left = walkDir === 0 ? null : (door.side === 'N') === (walkDir > 0);
-    sideTxt = walkDir === 0 ? (door.side === 'N' ? 'อยู่ตรงหน้า' : 'อยู่ด้านหลัง') : left ? 'อยู่ทางซ้าย' : 'อยู่ทางขวา';
-  }
-  const line = mkLine(pts, dXY);
-  const legs = legsOf(pts, 30, 1);
-  const steps = legSteps(legs, 'in', fromX == null ? 'ออกจากลิฟต์แล้วเดินตรง' : null);
-  const room = BYID[code];
-  steps.push({ icon: 'arrive', title: `ถึง ${room ? titleOf(room) : code}`, sub: sideTxt, len: 0, s0: line.len, s1: line.len, phase: 'in' });
-  return { floor, ...line, steps, door };
+// anchors: where a floor leg starts or ends. x = its point on the corridor; spur = the points from there out to the lift, door or entrance
+function liftAnchor(fl) { const F = N7.floors[fl]; return { kind: 'lift', x: F.lift.door_x ?? F.lift.x, spur: [[F.lift.x, F.lift.y]] }; }
+function entranceAnchor(fl) { const E = N7.floors[fl] && N7.floors[fl].entrance; return E ? { kind: 'entrance', x: E.x, spur: E.via || [] } : null; }
+function doorAnchors(fl, code) {
+  const d = N7.floors[fl] && N7.floors[fl].doors[code];
+  if (!d) return [];
+  return [d, ...(d.more || [])].map((x) => ({ kind: 'door', code, x: x.x, side: x.side, spur: x.via || [] }));
 }
-function planRoute(dest, kind) {
-  const b = buildingOf(dest);
-  if (!b || b.entrance_node == null) return null;
-  const o = originInfo();
-  if (!o.ll) return null;
-  const sn = o.node != null ? o.node : nearestNode(o.ll);
-  let path = astar(sn, b.entrance_node);
+function nearestDoor(fl, code, x) {        // a room with several corridor doors: the one nearest the tester's way in (T1-D1)
+  return doorAnchors(fl, code).reduce((b, d) => (!b || Math.abs(d.x - x) < Math.abs(b.x - x) ? d : b), null);
+}
+function floorLeg(fl, A, B) {
+  const cy = N7.floors[fl].corridor.y, pts = [];
+  for (const p of [...A.spur.slice().reverse(), [A.x, cy], [B.x, cy], ...B.spur]) if (!pts.length || dXY(pts[pts.length - 1], p) > 0.3) pts.push(p);
+  const line = mkLine(pts, dXY);
+  const first = A.kind === 'lift' ? (A.start ? 'จากหน้าลิฟต์ เดินตรง' : 'ออกจากลิฟต์แล้วเดินตรง') : A.kind === 'entrance' ? 'เข้าอาคารแล้วเดินตรง' : null;
+  const steps = legSteps(legsOf(pts, 30, 1), first);
+  if (B.kind === 'door') {
+    const dir = Math.sign(B.x - A.x), room = BYID[B.code];
+    const sub = B.spur.length ? '' : dir === 0 ? (B.side === 'N' ? 'อยู่ตรงหน้า' : 'อยู่ด้านหลัง') : (B.side === 'N') === (dir > 0) ? 'อยู่ทางซ้าย' : 'อยู่ทางขวา';
+    steps.push({ icon: 'arrive', title: `ถึง ${room ? titleOf(room) : B.code}`, sub, len: 0, s0: line.len, s1: line.len });
+  } else if (B.kind === 'entrance') steps.push({ icon: 'exit', title: `ออกจากอาคาร ${N7.building}`, len: 0, s0: line.len, s1: line.len });
+  return { type: 'in', floor: fl, ...line, from: A, to: B, steps };
+}
+function liftSeg(from, to) {
+  return { type: 'lift', from, to, len: 0, steps: [{ icon: 'lift', title: `${floorRank(to) > floorRank(from) ? 'ขึ้น' : 'ลง'}ลิฟต์ไปยังชั้น ${to}`, len: 0, s0: 0, s1: 0 }] };
+}
+function indoorChain(fl, A, target) {      // from anchor A on floor fl to a room ({floor, code}) or out of the main entrance ({exit: true})
+  const fd = target.exit ? EF() : target.floor, segs = [];
+  if (fl !== fd) {
+    if (A.kind !== 'lift') segs.push(floorLeg(fl, A, liftAnchor(fl)));   // already at the lift: straight in
+    segs.push(liftSeg(fl, fd)); fl = fd; A = liftAnchor(fd);
+  }
+  segs.push(floorLeg(fl, A, target.exit ? entranceAnchor(fd) : nearestDoor(fd, target.code, A.x)));
+  return segs.filter((s, i, all) => s.type !== 'in' || s.len > 0.3 || i === all.length - 1);   // e.g. starting at the lift: no empty first leg
+}
+function outdoorSeg(fromLL, fromNode, toNode, kind) {   // campus paths from a point (or a graph node) to an entrance node
+  const sn = fromNode != null ? fromNode : nearestNode(fromLL);
+  let path = astar(sn, toNode);
   if (path && kind === 'shade' && path.length > 2) {
     // Concept mock: no covered-walkway data yet, so show a plausible different route (penalise the fastest one's edges).
     const key = (a, c) => (a < c ? `${a}_${c}` : `${c}_${a}`);
@@ -562,42 +586,118 @@ function planRoute(dest, kind) {
     const fastLen = lenOf(path);
     for (const k of [1.6, 2.5, 4, 8]) {
       const pen = new Map([...fastEdges].map((e) => [e, k]));
-      const alt = astar(sn, b.entrance_node, pen); if (!alt) continue;
+      const alt = astar(sn, toNode, pen); if (!alt) continue;
       const shared = alt.slice(1).filter((c, i) => fastEdges.has(key(alt[i], c))).length / Math.max(1, alt.length - 1);
       if (shared < 0.7 && lenOf(alt) <= 2 * fastLen + 50) { path = alt; break; }
     }
   }
   if (!path) return null;
   let pts = path.map((i) => G.nodes[i]);
-  if (dLL(o.ll, pts[0]) > 2) pts = [o.ll, ...pts];
-  const out = mkLine(pts, dLL);
-  const steps = out.len > 3 ? legSteps(legsOf(pts.map(xy), 35, 8), 'out', null) : [];
-  const inn = dest.kind === 'room' && dest.mapped ? indoorPlan(dest.floor, dest.id) : null;
-  if (inn) {
-    steps.push({ icon: 'enter', title: `เข้าอาคาร ${b.code}`, sub: b.entrance_checked ? '' : 'ทางเข้าโดยประมาณ', len: 0, s0: out.len, s1: out.len, phase: 'out' });
-    steps.push({ icon: 'lift', title: `ขึ้นลิฟต์ไปยังชั้น ${dest.floor}`, len: 0, s0: 0, s1: 0, phase: 'lift' });
-    steps.push(...inn.steps);
+  if (fromLL && dLL(fromLL, pts[0]) > 2) pts = [fromLL, ...pts];
+  const line = mkLine(pts, dLL);
+  return { type: 'out', ...line, steps: line.len > 3 ? legSteps(legsOf(pts.map(xy), 35, 8), null) : [] };
+}
+function flatSteps(r) {                    // the route's step list: every segment's steps, each tagged with its segment
+  r.steps = [];
+  r.segs.forEach((s, i) => s.steps.forEach((st) => r.steps.push({ ...st, seg: i })));
+}
+function planRoute(dest, kind) {
+  const b = buildingOf(dest);
+  if (!b || b.entrance_node == null) return null;
+  const o = originInfo();
+  if (!o.inN7 && !o.ll) return null;
+  const n7 = BYID[N7.building], entry = entranceAnchor(EF());
+  const destIn = dest.kind === 'room' && dest.mapped && dest.building === N7.building && !!N7.floors[dest.floor];
+  const segs = [];
+  if (o.inN7) {                            // starting inside N7 (T1-S4): no outdoor part before reaching the room
+    const fl = o.inN7.floor;
+    const A = o.inN7.code ? nearestDoor(fl, o.inN7.code, destIn && dest.floor === fl ? doorAnchors(fl, dest.id)[0].x : liftAnchor(fl).x)
+      : { ...liftAnchor(fl), start: true };   // inside, floor known: start at that floor's lift lobby
+    if (destIn) segs.push(...indoorChain(fl, A, { floor: dest.floor, code: dest.id }));
+    else if (b !== n7) {                   // to another building: down to the entrance, then outdoors
+      const out = outdoorSeg(n7.entrance, n7.entrance_node, b.entrance_node, kind); if (!out) return null;
+      if (entry) segs.push(...indoorChain(fl, A, { exit: true }));   // without a plan of the entrance floor: from the entrance, as before
+      segs.push(out);
+    } else {                               // N7 itself, or a room in N7 without a plan: nothing to walk
+      const st = dest.kind === 'room' ? { title: `ห้อง ${dest.code} อยู่ชั้น ${dest.floor}`, sub: 'ห้องนี้ยังไม่มีแผนผัง' } : { title: `คุณอยู่ในอาคาร ${b.code} แล้ว`, sub: '' };
+      segs.push({ type: 'in', floor: fl, ...mkLine([[A.x, N7.floors[fl].corridor.y]], dXY), from: A, to: A, steps: [{ icon: 'arrive', ...st, len: 0, s0: 0, s1: 0 }] });
+    }
   } else {
-    const sub = dest.kind === 'building' ? b.th : `ห้องอยู่ชั้น ${dest.floor} · ยังไม่มีแผนผังภายในอาคารนี้`;
-    steps.push({ icon: 'arrive', title: dest.kind === 'building' ? `ถึง ${b.code}` : `ถึงอาคาร ${b.code} แล้วขึ้นไปชั้น ${dest.floor}`, sub, len: 0, s0: out.len, s1: out.len, phase: 'out' });
+    const out = outdoorSeg(o.ll, o.node, b.entrance_node, kind); if (!out) return null;
+    if (destIn) {
+      if (out.len > 3) segs.push(out);
+      if (entry) segs.push(...indoorChain(EF(), entry, { floor: dest.floor, code: dest.id }));   // in at the entrance floor, then the lift
+      else { const A = liftAnchor(dest.floor); segs.push(liftSeg(EF(), dest.floor), floorLeg(dest.floor, A, nearestDoor(dest.floor, dest.id, A.x))); }
+    } else segs.push(out);
   }
-  const total = out.len + (inn ? inn.len : 0);
-  const secs = total / WALK + (inn ? LIFT_S : 0);
-  return { dest, kind, originLabel: o.label, out, inn, steps, total, secs };
+  // an outdoor part ends with "enter the building" when indoor segments follow, or with the arrival
+  segs.forEach((s, i) => {
+    if (s.type !== 'out') return;
+    const end = { len: 0, s0: s.len, s1: s.len };
+    if (segs[i + 1]) s.steps = [...s.steps, { icon: 'enter', title: `เข้าอาคาร ${n7.code}`, sub: n7.entrance_checked ? '' : 'ทางเข้าโดยประมาณ', ...end }];
+    else s.steps = [...s.steps, { icon: 'arrive', ...end,
+      title: dest.kind === 'building' ? `ถึง ${b.code}` : `ถึงอาคาร ${b.code} แล้วขึ้นไปชั้น ${dest.floor}`,
+      sub: dest.kind === 'building' ? b.th : `ห้องอยู่ชั้น ${dest.floor} · ยังไม่มีแผนผังภายในอาคารนี้` }];
+  });
+  const r = { dest, kind, originLabel: o.label, segs, out: segs.find((s) => s.type === 'out') || null, startFloor: o.inN7 ? o.inN7.floor : null };
+  flatSteps(r);
+  r.total = segs.reduce((t, s) => t + s.len, 0);
+  r.secs = r.total / WALK + segs.filter((s) => s.type === 'lift').length * LIFT_S;
+  return r;
+}
+
+// ---------- inside N7 already? (T1-S4: a route that starts inside the building must not go out and back in)
+function polyOf(b) {                       // the campus footprint of a building
+  return CAMPUS.buildings.reduce((best, x) => { const d = dLL(x.c, b.c); return d < best.d ? { d, x } : best; }, { d: Infinity, x: null }).x;
+}
+function inPoly(ll, poly) {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a[0] > ll[0]) !== (b[0] > ll[0]) && ll[1] < ((b[1] - a[1]) * (ll[0] - a[0])) / (b[0] - a[0]) + a[1]) c = !c;
+  }
+  return c;
+}
+function distToPoly(ll, poly) {
+  const p = xy(ll); let best = Infinity;
+  for (let i = 1; i < poly.length; i++) {
+    const a = xy(poly[i - 1]), b = xy(poly[i]), vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
+    best = Math.min(best, Math.hypot(a[0] + vx * t - p[0], a[1] + vy * t - p[1]));
+  }
+  return best;
+}
+function nearN7(ll, buf) {
+  const b = BYID[N7.building], f = b && b.c && polyOf(b);
+  return !!f && (inPoly(ll, f.poly) || distToPoly(ll, f.poly) < buf);
+}
+function askWhere(then) {                  // GPS puts the tester at N7: ask whether they are inside, and on which floor
+  S.startIn = null;
+  if (S.origin.type !== 'me' || S.meSrc !== 'gps' || !S.me || !nearN7(S.me, Math.min(30, Math.max(10, S.acc || 10)))) { then(); return; }
+  const grid = document.createElement('div'); grid.className = 'floorgrid';
+  for (const f of N7_FLOORS.filter((x) => N7.floors[x]).reverse()) {
+    const b = document.createElement('button'); b.className = 'btn ghost'; b.textContent = f === 'B' ? 'ใต้ดิน' : `ชั้น ${f}`;
+    b.addEventListener('click', () => { S.startIn = { floor: f }; TestLog.event('start_inside', { floor: f }); closeDialog(); then(); });
+    grid.appendChild(b);
+  }
+  dialog({ title: `คุณอยู่ในอาคาร ${N7.building} แล้วหรือยัง?`, text: 'ถ้าอยู่ข้างในแล้ว เลือกชั้นที่คุณอยู่ เส้นทางจะเริ่มจากลิฟต์ของชั้นนั้น', extra: [grid],
+    buttons: [{ t: 'ยังอยู่นอกอาคาร', ghost: true, on: () => { TestLog.event('start_inside', { floor: null }); closeDialog(); then(); } }] });
 }
 
 // ---------- route preview
 function openPreview() {
   const p = S.place;
   if (S.origin.type === 'me' && !S.me) { toast('ยังไม่ทราบตำแหน่งของคุณ เลือกจุดเริ่มต้นจากรายการ'); openList('pick'); S.pickField = 'from'; return; }
-  S.routeKind = 'fast';
-  S.route = planRoute(p, 'fast');
-  if (!S.route) { toast('หาเส้นทางไปที่นี่ไม่ได้'); return; }
-  show('preview'); showMap('campus');
-  $('#pv-from').textContent = S.route.originLabel;
-  $('#pv-to').textContent = titleOf(p);
-  $('#pv-steps').hidden = true;
-  renderPreview();
+  askWhere(() => {
+    S.routeKind = 'fast';
+    S.route = planRoute(p, 'fast');
+    if (!S.route) { toast('หาเส้นทางไปที่นี่ไม่ได้'); return; }
+    show('preview');
+    $('#pv-from').textContent = S.route.originLabel;
+    $('#pv-to').textContent = titleOf(p);
+    $('#pv-steps').hidden = true;
+    renderPreview();
+  });
 }
 function renderPreview() {
   const r = S.route, shade = S.routeKind === 'shade';
@@ -608,10 +708,16 @@ function renderPreview() {
   $('#pv-dist').textContent = `ระยะทาง: ${fmtDist(r.total)}`;
   stepList($('#pv-steplist'), r.steps, -1);
   C.route.clearLayers(); C.pins.clearLayers(); C.hl.clearLayers();
-  const b = buildingOf(S.place);
-  highlightBuilding(b);
+  if (!r.out) {                            // the whole route is inside N7: show the floor it starts on
+    const first = r.segs.find((s) => s.type === 'in');
+    showMap('floor');
+    if (first) { drawLegOn(first, r.dest); fitFloor(first.floor); }
+    return;
+  }
+  showMap('campus');
+  highlightBuilding(buildingOf(S.place));
   const other = planRoute(S.place, shade ? 'fast' : 'shade');
-  if (other) L.polyline(other.out.pts, { color: '#f5b26f', weight: 6, opacity: 0.55, interactive: false }).addTo(C.route);
+  if (other && other.out) L.polyline(other.out.pts, { color: '#f5b26f', weight: 6, opacity: 0.55, interactive: false }).addTo(C.route);
   L.polyline(r.out.pts, { color: '#ffffff', weight: 10, opacity: 0.9, interactive: false }).addTo(C.route);
   L.polyline(r.out.pts, { color: '#fb8c3a', weight: 6, interactive: false }).addTo(C.route);
   L.marker(r.out.pts[r.out.pts.length - 1], { icon: pinIcon(), interactive: false }).addTo(C.pins);
@@ -628,18 +734,21 @@ function stepList(ul, steps, cur) {
     ul.appendChild(li);
   });
 }
+const STEP_ICON = { straight: 'step-straight', left: 'turn-left', right: 'turn-right', uturn: 'step-uturn', lift: 'step-lift', stairs: 'step-stairs', enter: 'pin', exit: 'pin', arrive: 'pin' };
 function stepIcon(icon) {
-  const f = { straight: 'step-straight', left: 'turn-left', right: 'turn-right', uturn: 'step-uturn', lift: 'step-lift', stairs: 'step-stairs', enter: 'pin', arrive: 'pin' }[icon] || 'step-straight';
-  return `<img src="icons/${f}.svg" alt="" class="${icon === 'straight' ? 'rot' : ''}">`;
+  return `<img src="icons/${STEP_ICON[icon] || 'step-straight'}.svg" alt="" class="${icon === 'straight' ? 'rot' : ''}">`;
 }
 
 // ---------- navigation
-const NAV = { r: null, phase: 'out', s: 0, playing: true, speed: 8, timer: 0, watch: null, lost: false, lostDone: false, offSince: 0, trk: null,
-              g: null, gtimer: 0 };   // g: the outdoor GPS filter (real walk); gtimer: redraws the marker between fixes
+const NAV = { r: null, seg: 0, phase: 'out', s: 0, playing: true, speed: 8, timer: 0, watch: null, lost: false, lostDone: false, offSince: 0, trk: null,
+              g: null, gtimer: 0, drawn: -1 };   // seg: the segment being walked; phase: its type, or 'done'; g: the outdoor GPS filter;
+                                                  // gtimer: redraws the marker between fixes; drawn: the segment whose floor is on the floor map
+const curSeg = () => (NAV.r ? NAV.r.segs[NAV.seg] : null);
+const isLastSeg = () => !!NAV.r && NAV.seg === NAV.r.segs.length - 1;
 function newTracker() {
   // the browser tracker (real walk mode): steps move the dot along the planned indoor route; turns snap it to the route's corners.
-  // segFrom: where the current segment is counted from: 'lift', 'sign', or 'sign at door' (a sign photo put the tester at the destination)
-  return { on: S.mode === 'real' && Motion.running(), L: DEFAULT_STEP, Lsrc: 'default', Lgps: null, gps0: null,
+  // segFrom: where the current leg is counted from: 'start', 'entrance', 'lift', 'sign', or 'sign at door' (a sign photo put the tester at the destination)
+  return { on: S.mode === 'real' && Motion.running(), L: DEFAULT_STEP, Lsrc: 'default', Lgps: null, gps0: null, Lset: false,
            outSteps: 0, inSteps: 0, segSteps: 0, sRaw: 0, lastReset: 0, arrPrompted: false, segFrom: null };
 }
 // plausible step lengths (m) for a height in cm: about 0.415 × height, give or take 20 %; without a height, a wide adult range
@@ -656,14 +765,16 @@ function startLoading(then) {
   setTimeout(then, 1100);
 }
 function routeInfo(r) {
-  return { dest: r.dest.id, dest_code: r.dest.code, kind: r.kind, out_m: Math.round(r.out.len), in_m: r.inn ? +r.inn.len.toFixed(1) : null,
-           floor: r.inn ? r.inn.floor : null, origin: r.originLabel, steps: r.steps.map((x) => `${x.phase}:${x.icon}:${Math.round(x.len)}`).join(' ') };
+  const ins = r.segs.filter((x) => x.type === 'in');
+  return { dest: r.dest.id, dest_code: r.dest.code, kind: r.kind, out_m: r.out ? Math.round(r.out.len) : 0,
+           in_m: ins.length ? +ins.reduce((t, x) => t + x.len, 0).toFixed(1) : null, floor: r.dest.kind === 'room' ? r.dest.floor : null,
+           start_floor: r.startFloor, origin: r.originLabel, segs: r.segs.map((x) => (x.type === 'lift' ? `lift:${x.from}>${x.to}` : x.type === 'in' ? `in:${x.floor}:${x.len.toFixed(1)}` : `out:${Math.round(x.len)}`)).join(' '),
+           steps: r.steps.map((x) => `${r.segs[x.seg].type}:${x.icon}:${Math.round(x.len)}`).join(' ') };
 }
 function startNav(route) {
   stopNav();
   if (!TestLog.active()) TestLog.startRun({ kind: 'free', mode: S.mode });
-  Object.assign(NAV, { r: route, s: 0, lost: false, lostDone: false, offSince: 0, playing: true });
-  NAV.phase = route.out.len > 3 ? 'out' : route.inn ? 'lift' : 'done';
+  Object.assign(NAV, { r: route, seg: 0, s: 0, lost: false, lostDone: false, offSince: 0, playing: true, drawn: -1 });
   if (S.mode === 'real') { Motion.start(); TestLog.recStart(); }
   NAV.trk = newTracker();
   NAV.trk.Lout = chooseStepLength(NAV.trk)[0];       // outdoors, steps carry the marker between GPS fixes
@@ -673,12 +784,12 @@ function startNav(route) {
   $('#sim-play').textContent = '❚❚'; $('#sim-speed').textContent = `×${NAV.speed}`;
   $('#nav-steps').hidden = true; $('#navbar').hidden = false;
   C.route.clearLayers(); C.pins.clearLayers(); C.hl.clearLayers();
-  L.polyline(route.out.pts, { color: '#ffffff', weight: 11, opacity: 0.9, interactive: false }).addTo(C.route);
-  L.polyline(route.out.pts, { color: '#fb8c3a', weight: 7, interactive: false }).addTo(C.route);
-  L.marker(route.out.pts[route.out.pts.length - 1], { icon: pinIcon(), interactive: false }).addTo(C.pins);
-  if (route.inn) drawIndoorRoute();
-  if (NAV.phase === 'lift') enterLift();
-  else if (NAV.phase === 'out') { showMap('campus'); cmap.setView(route.out.pts[0], 18.5, { animate: false }); }
+  const outs = route.segs.filter((s) => s.type === 'out');
+  for (const s of outs) {
+    L.polyline(s.pts, { color: '#ffffff', weight: 11, opacity: 0.9, interactive: false }).addTo(C.route);
+    L.polyline(s.pts, { color: '#fb8c3a', weight: 7, interactive: false }).addTo(C.route);
+  }
+  if (outs.length) { const e = outs[outs.length - 1]; L.marker(e.pts[e.pts.length - 1], { icon: pinIcon(), interactive: false }).addTo(C.pins); }
   if (S.mode === 'sim') {
     let last = performance.now();
     NAV.timer = setInterval(() => {
@@ -686,100 +797,113 @@ function startNav(route) {
       if (NAV.playing && !NAV.lost && (NAV.phase === 'out' || NAV.phase === 'in')) advance(WALK * NAV.speed * dt);
     }, 100);
   } else {
-    gpsInit();
     NAV.gtimer = setInterval(() => { if (NAV.phase === 'out') render(); }, 1000);   // keeps the marker moving between fixes
     startGPS();
   }
+  enterSeg(0);
+}
+function enterSeg(i) {                       // start walking segment i: show the floor the tester is on (T1-S5, T1-S6)
+  const r = NAV.r, seg = r.segs[i], prev = r.segs[i - 1], T = NAV.trk, sPrev = NAV.s;
+  NAV.seg = i; NAV.phase = seg.type; NAV.s = 0;
+  if (seg.type !== 'out' && T && !T.Lset) indoorsNow(prev && prev.type === 'out' ? sPrev : null);
+  if (seg.type === 'out') {
+    if (S.mode === 'real') gpsInit();        // indoors GPS is not used; a new outdoor part starts a fresh filter
+    showMap('campus'); cmap.setView(seg.pts[0], 18.5, { animate: false });
+  } else {
+    drawSeg(seg); showMap('floor');
+    fmap.setView(fll(seg.type === 'lift' ? liftPoint(segFloor(seg)) : seg.pts[0]), 3, { animate: false });
+  }
+  if (seg.type === 'lift') {
+    $('#lift-text').textContent = `ออกจากลิฟต์ที่ชั้น ${seg.to} แล้วหรือยัง?`;
+    $('#lift-ok').textContent = `ถึงชั้น ${seg.to} แล้ว`;
+    $('#lift-in').hidden = S.mode !== 'real';
+    $('#liftcard').hidden = false;
+    TestLog.event('lift_card', { floor: seg.to, from: seg.from });
+  } else $('#liftcard').hidden = true;
+  if (seg.type === 'in' && T) Object.assign(T, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom: !prev ? 'start' : prev.type === 'lift' ? 'lift' : 'entrance' });
+  TestLog.event('segment', { i, type: seg.type, floor: seg.type === 'out' ? null : segFloor(seg), len: +seg.len.toFixed(1) });
+  if (!r.segs.some((s) => s.len > 0) && seg.type === 'in') { arrive(); return; }   // nothing to walk at all
   render();
 }
-function drawIndoorRoute() {
-  const r = NAV.r;
-  drawFloor(r.inn.floor, r.dest.id);
-  C.froute.clearLayers();
-  L.polyline(r.inn.pts.map(fll), { color: '#ffffff', weight: 10, interactive: false }).addTo(C.froute);
-  L.polyline(r.inn.pts.map(fll), { color: '#fb8c3a', weight: 6, interactive: false }).addTo(C.froute);
+function nextSeg() { if (isLastSeg()) arrive(); else enterSeg(NAV.seg + 1); }
+function indoorsNow(sOut) {                  // first time indoors: the step length, from the outdoor walk when it was long enough
+  const T = NAV.trk;
+  if (T.gps0 && sOut != null) {              // GPS distance along the path ÷ steps
+    const dist = sOut - T.gps0.s, n = T.outSteps - T.gps0.steps, Lg = n ? dist / n : 0;
+    TestLog.event('gps_calibration', { dist_m: +dist.toFixed(1), steps: n, L: +Lg.toFixed(3) });
+    if (dist >= 60 && n >= 50 && Lg >= 0.45 && Lg <= 0.95) T.Lgps = Lg;
+  }
+  [T.L, T.Lsrc] = chooseStepLength(T); T.Lset = true;
+  const cal = TestLog.stepLength();
+  TestLog.event('step_length', { L: +T.L.toFixed(3), source: T.Lsrc, ...(cal && T.Lsrc !== 'calibration walk' ? { cal_ignored: cal } : {}) });
 }
+const segFloor = (seg) => (seg.type === 'lift' ? (N7.floors[seg.from] ? seg.from : seg.to) : seg.floor);   // old data had no entrance floor
+function liftPoint(fl) { const F = N7.floors[fl]; return [F.lift.x, F.lift.y]; }
+function drawLegOn(seg, dest) {              // a floor with one leg of the route drawn on it
+  const fl = segFloor(seg);
+  const hit = dest && dest.kind === 'room' && dest.floor === fl ? dest.id : seg.type === 'lift' || (seg.to && seg.to.kind === 'lift') ? 'lift' : null;
+  drawFloor(fl, hit);
+  C.froute.clearLayers();
+  if (seg.type === 'in' && seg.pts.length > 1) {
+    L.polyline(seg.pts.map(fll), { color: '#ffffff', weight: 10, interactive: false }).addTo(C.froute);
+    L.polyline(seg.pts.map(fll), { color: '#fb8c3a', weight: 6, interactive: false }).addTo(C.froute);
+  }
+}
+function drawSeg(seg) { drawLegOn(seg, NAV.r.dest); NAV.drawn = NAV.r.segs.indexOf(seg); }
 function stopNav() {
   clearInterval(NAV.timer); NAV.timer = 0;
   clearInterval(NAV.gtimer); NAV.gtimer = 0;
   if (NAV.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(NAV.watch);
   NAV.watch = null;
-  $('#arrivecard').hidden = true; $('#atdoor').hidden = true; $('#trackbadge').hidden = true;
+  $('#arrivecard').hidden = true; $('#atdoor').hidden = true; $('#trackbadge').hidden = true; $('#liftcard').hidden = true;
   if (!CAL.on) Motion.stop();
 }
-function advance(ds) {
+function advance(ds) {                       // simulation: walk ds metres along the current segment
+  const seg = curSeg(); if (!seg || seg.type === 'lift') return;
   NAV.s += ds;
-  const leg = NAV.phase === 'out' ? NAV.r.out : NAV.r.inn;
-  if (NAV.s >= leg.len) {
-    NAV.s = leg.len;
-    if (NAV.phase === 'out') { if (NAV.r.inn) enterLift(); else arrive(); return; }
-    arrive(); return;
-  }
-  if (NAV.phase === 'in' && S.mode === 'sim' && S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * leg.len) lose(true);
-  render();
-}
-function enterLift() {
-  const T = NAV.trk;
-  if (T && T.gps0) {                         // step length from the outdoor walk: GPS distance along the path ÷ steps
-    const dist = NAV.s - T.gps0.s, n = T.outSteps - T.gps0.steps, Lg = n ? dist / n : 0;
-    TestLog.event('gps_calibration', { dist_m: +dist.toFixed(1), steps: n, L: +Lg.toFixed(3) });
-    if (dist >= 60 && n >= 50 && Lg >= 0.45 && Lg <= 0.95) T.Lgps = Lg;
-  }
-  if (T) {
-    [T.L, T.Lsrc] = chooseStepLength(T);
-    const cal = TestLog.stepLength();
-    TestLog.event('step_length', { L: +T.L.toFixed(3), source: T.Lsrc, ...(cal && T.Lsrc !== 'calibration walk' ? { cal_ignored: cal } : {}) });
-  }
-  NAV.phase = 'lift'; NAV.s = 0;
-  drawIndoorRoute(); showMap('floor');
-  const start = NAV.r.inn.pts[0];
-  fmap.setView(fll(start), 3, { animate: false });
-  const fl = NAV.r.inn.floor;
-  $('#lift-text').textContent = `ออกจากลิฟต์ที่ชั้น ${fl} แล้วหรือยัง?`;
-  $('#lift-ok').textContent = `ถึงชั้น ${fl} แล้ว`;
-  $('#lift-in').hidden = S.mode !== 'real';
-  $('#liftcard').hidden = false;
-  TestLog.event('lift_card', { floor: fl });
+  if (NAV.s >= seg.len) { NAV.s = seg.len; nextSeg(); return; }
+  if (seg.type === 'in' && isLastSeg() && S.mode === 'sim' && S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * seg.len) lose(true);
   render();
 }
 function liftDone() {
+  const seg = curSeg(); if (!seg || seg.type !== 'lift') return;
   $('#liftcard').hidden = true;
-  TestLog.event('lift_exit', { floor: NAV.r.inn.floor });
-  NAV.phase = 'in'; NAV.s = 0;
-  const T = NAV.trk;
-  if (T) Object.assign(T, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom: 'lift' });
-  render();
+  TestLog.event('lift_exit', { floor: seg.to });
+  nextSeg();
 }
 // ---- the browser tracker
 function onStep(ev) {
   if (CAL.on) { calStep(); return; }
-  const T = NAV.trk;
-  if (!NAV.r || !T || S.mode !== 'real') return;
-  if (NAV.phase === 'out') {
+  const T = NAV.trk, seg = curSeg();
+  if (!NAV.r || !T || S.mode !== 'real' || !seg) return;
+  if (seg.type === 'out') {
     T.outSteps++;
     if (NAV.g && NAV.g.onRoute) { gpsStep(T.Lout); if (!gpsAtEntrance()) render(); }
     return;
   }
-  if (NAV.phase !== 'in' || NAV.lost) return;
+  if (seg.type !== 'in' || NAV.lost) return;
   T.inSteps++; T.segSteps++;
   T.sRaw += T.L;
-  const end = NAV.r.inn.len;
+  const end = seg.len, last = isLastSeg();
   NAV.s = Math.min(T.sRaw, end);
-  TestLog.event('step', { s: +T.sRaw.toFixed(2), peak: +ev.peak.toFixed(2) });
-  if (S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * end) { lose(true); return; }
-  if (T.sRaw >= end - 1.0 && !T.arrPrompted) showArrivePrompt();
+  TestLog.event('step', { s: +T.sRaw.toFixed(2), peak: +ev.peak.toFixed(2), seg: NAV.seg });
+  if (last && S.scenario && S.scenario.loseAt && !NAV.lostDone && NAV.s > S.scenario.loseAt * end) { lose(true); return; }
+  if (T.sRaw >= end - 1.0) {
+    if (!last) { nextSeg(); return; }        // at the lift or the entrance: on to the next segment
+    if (!T.arrPrompted) showArrivePrompt();
+  }
   render();
 }
 function onTurn(ev) {
-  const T = NAV.trk;
-  if (!NAV.r || !T || S.mode !== 'real') return;
-  if (NAV.phase !== 'in' || NAV.lost) { TestLog.event('turn', { deg: Math.round(ev.deg), phase: NAV.phase }); return; }
-  const corners = NAV.r.steps.filter((x) => x.phase === 'in' && (x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn'));
+  const T = NAV.trk, seg = curSeg();
+  if (!NAV.r || !T || S.mode !== 'real' || !seg) return;
+  if (seg.type !== 'in' || NAV.lost) { TestLog.event('turn', { deg: Math.round(ev.deg), phase: NAV.phase }); return; }
+  const corners = seg.steps.filter((x) => x.icon === 'left' || x.icon === 'right' || x.icon === 'uturn');
   const win = Math.max(5, 0.35 * (T.sRaw - T.lastReset));
   let best = null;
   for (const c of corners) { const d = Math.abs(c.s0 - T.sRaw); if (d <= win && (!best || d < Math.abs(best.s0 - T.sRaw))) best = c; }
   const before = T.sRaw;
-  if (best && Math.abs(ev.deg) >= 50) { T.sRaw = best.s0 + 0.5; T.lastReset = T.sRaw; NAV.s = Math.min(T.sRaw, NAV.r.inn.len); }
+  if (best && Math.abs(ev.deg) >= 50) { T.sRaw = best.s0 + 0.5; T.lastReset = T.sRaw; NAV.s = Math.min(T.sRaw, seg.len); }
   TestLog.event('turn', { deg: Math.round(ev.deg), dur_ms: Math.round(ev.dur), s_before: +before.toFixed(2), snapped_to: best && Math.abs(ev.deg) >= 50 ? +best.s0.toFixed(2) : null });
   render();
 }
@@ -795,22 +919,23 @@ function showArrivePrompt() {
 }
 function trueArrive(src) {
   // the tester says they are at the destination door: the tracker's error there is the ground truth for the web tracker
-  const T = NAV.trk, end = NAV.r.inn ? NAV.r.inn.len : 0;
-  if (T && NAV.phase === 'in') {
-    const err = T.sRaw - end;
+  const T = NAV.trk, seg = curSeg();
+  if (T && seg && seg.type === 'in') {
+    const end = seg.len, err = T.sRaw - end, last = isLastSeg();
     const signAtDoor = T.segFrom === 'sign at door';      // a sign photo, not the tracker, found the door: no tracker error to measure
-    TestLog.event('true_arrival', { src, s: +T.sRaw.toFixed(2), route_m: +end.toFixed(2), err_m: +err.toFixed(2), seg_steps: T.segSteps, seg_from: T.segFrom, L: +T.L.toFixed(3) });
-    TestLog.summary({ arrival_err_m: signAtDoor ? null : +err.toFixed(2), seg_route_m: +end.toFixed(2), seg_from: T.segFrom, seg_steps: T.segSteps, in_steps: T.inSteps,
+    TestLog.event('true_arrival', { src, s: +T.sRaw.toFixed(2), route_m: +end.toFixed(2), err_m: +err.toFixed(2), seg_steps: T.segSteps, seg_from: T.segFrom, L: +T.L.toFixed(3), seg: NAV.seg, last_leg: last });
+    TestLog.summary({ arrival_err_m: signAtDoor || !last ? null : +err.toFixed(2), seg_route_m: +end.toFixed(2), seg_from: T.segFrom, seg_steps: T.segSteps, in_steps: T.inSteps,
                       step_len_used: +T.L.toFixed(3), step_len_source: T.Lsrc, step_len_from_route: T.segSteps ? +(end / T.segSteps).toFixed(3) : null,
                       tracker: T.on });
   }
   $('#arrivecard').hidden = true; $('#atdoor').hidden = true;
-  NAV.s = end; arrive();
+  if (seg) NAV.s = seg.len;
+  arrive();
 }
 function arrive() {
   stopNav();
   NAV.phase = 'done';
-  const p = NAV.r.dest;
+  const p = NAV.r.dest, last = NAV.r.segs[NAV.r.segs.length - 1];
   TestLog.event('arrived', { dest: p.id });
   TestLog.endRun('arrived');
   show('place');
@@ -821,45 +946,48 @@ function arrive() {
   $('#place-thumb').innerHTML = thumbSVG(p);
   $('#place-note').hidden = true;
   $('#place-btns').hidden = true; $('#btn-finish').hidden = false; $('#place-close').hidden = true; $('#btn-layers').hidden = true;
-  if (NAV.r.inn) { drawFloor(NAV.r.inn.floor, p.id); C.froute.clearLayers(); showMap('floor'); const e = NAV.r.inn.pts[NAV.r.inn.pts.length - 1]; fmap.setView([e[1] - 8, e[0]], 3, { animate: false }); }
+  if (last && last.type === 'in') { drawFloor(last.floor, p.id); C.froute.clearLayers(); showMap('floor'); const e = last.pts[last.pts.length - 1]; fmap.setView([e[1] - 8, e[0]], 3, { animate: false }); }
   else showMap('campus');
 }
 function curStepIndex() {
-  const st = NAV.r.steps;
-  if (NAV.phase === 'lift') return st.findIndex((x) => x.phase === 'lift');
-  for (let i = 0; i < st.length; i++) {
-    const x = st[i];
-    if (x.phase === NAV.phase && NAV.s >= x.s0 && NAV.s < x.s1) return i;
-  }
-  for (let i = st.length - 1; i >= 0; i--) if (st[i].phase === NAV.phase) return i;
+  const st = NAV.r.steps, seg = curSeg();
+  if (!seg) return st.length - 1;
+  if (seg.type === 'lift') return st.findIndex((x) => x.seg === NAV.seg);
+  for (let i = 0; i < st.length; i++) { const x = st[i]; if (x.seg === NAV.seg && NAV.s >= x.s0 && NAV.s < x.s1) return i; }
+  for (let i = st.length - 1; i >= 0; i--) if (st[i].seg === NAV.seg) return i;
   return 0;
 }
 function render() {
-  const r = NAV.r; if (!r) return;
+  const r = NAV.r, seg = curSeg(); if (!r || !seg) return;
   const st = r.steps, i = curStepIndex(), step = st[i];
+  const real = S.mode === 'real';
   let pos;
-  if (NAV.phase === 'out') {
-    const real = S.mode === 'real';
-    pos = real ? outdoorMe(nowMs()) : along(r.out, NAV.s);
+  if (seg.type === 'out') {
+    pos = real ? outdoorMe(nowMs()) : along(seg, NAV.s);
     if ($('#cmap').hidden) showMap('campus');
     C.me.setIcon(meIcon(false)); C.me.setLatLng(pos).addTo(cmap);
     cmap.panTo(pos, real ? { animate: true, duration: 0.6, easeLinearity: 0.9 } : { animate: false });   // real walk: glide, not jump
     $('#floorpill').hidden = true;
-  } else if (r.inn) {
-    pos = along(r.inn, NAV.phase === 'lift' ? 0 : NAV.s);
-    C.fme.setIcon(meIcon(NAV.lost)); C.fme.setLatLng(fll(pos)).addTo(fmap);
-    if (!NAV.lost) fmap.panTo(fll(pos), { animate: false });
+  } else {
+    const fl = segFloor(seg);
+    if (NAV.drawn !== NAV.seg) drawSeg(seg);
+    if ($('#fmap').hidden) showMap('floor');
+    pos = seg.type === 'lift' ? liftPoint(fl) : along(seg, NAV.s);
+    if (S.viewFloor === fl) {                // the dot only on the floor the tester is on
+      C.fme.setIcon(meIcon(NAV.lost)); C.fme.setLatLng(fll(pos)).addTo(fmap);
+      if (!NAV.lost) fmap.panTo(fll(pos), real ? { animate: true, duration: 0.5 } : { animate: false });
+    } else C.fme.remove();
     $('#floorpill').hidden = false;
   }
-  $('#lostbtn').hidden = !(NAV.phase === 'in' && !NAV.lost);
-  $('#instr-next').hidden = !(S.mode === 'real' && NAV.phase === 'in');
-  const realIn = S.mode === 'real' && NAV.phase === 'in' && !NAV.lost;
-  $('#atdoor').hidden = !realIn;
-  $('#trackbadge').hidden = !(realIn && NAV.trk && NAV.trk.on);
+  const walkIn = seg.type === 'in' && !NAV.lost;
+  $('#lostbtn').hidden = !walkIn;
+  $('#instr-next').hidden = !(real && seg.type === 'in');
+  $('#atdoor').hidden = !(real && walkIn && isLastSeg());
+  $('#trackbadge').hidden = !(real && walkIn && NAV.trk && NAV.trk.on);
   if (NAV.trk) $('#trk-steps').textContent = NAV.trk.segSteps;
   // instruction card
   let icon = step.icon, title = step.title, sub = '';
-  if (NAV.phase === 'lift') { sub = 'เมื่อถึงชั้นแล้วกดปุ่ม "ถึงชั้นแล้ว"'; }
+  if (seg.type === 'lift') { sub = 'เมื่อถึงชั้นแล้วกดปุ่ม "ถึงชั้นแล้ว"'; }
   else {
     const rem = Math.max(0, step.s1 - NAV.s), next = st[i + 1];
     if (step.len > 0 && NAV.s - step.s0 < 6 && step.icon !== 'straight') { sub = fmtDist(rem); }
@@ -868,22 +996,24 @@ function render() {
     else sub = step.sub || '';
   }
   const ic = $('#instr-ico');
-  ic.src = `icons/${{ straight: 'step-straight', left: 'turn-left', right: 'turn-right', uturn: 'step-uturn', lift: 'step-lift', enter: 'pin', arrive: 'pin' }[icon] || 'step-straight'}.svg`;
+  ic.src = `icons/${STEP_ICON[icon] || 'step-straight'}.svg`;
   ic.classList.toggle('rot', icon === 'straight');
   $('#instr-t').textContent = title; $('#instr-s').textContent = sub;
-  // remaining time and distance
-  let rem = 0, secs = 0;
-  if (NAV.phase === 'out') { rem = r.out.len - NAV.s + (r.inn ? r.inn.len : 0); secs = rem / WALK + (r.inn ? LIFT_S : 0); }
-  else if (r.inn) { rem = r.inn.len - NAV.s; secs = rem / WALK + (NAV.phase === 'lift' ? LIFT_S : 0); }
+  // remaining time and distance: what is left of this segment and of every segment after it
+  let rem = Math.max(0, seg.len - NAV.s), lifts = seg.type === 'lift' ? 1 : 0;
+  for (const s of r.segs.slice(NAV.seg + 1)) { rem += s.len; if (s.type === 'lift') lifts++; }
+  const secs = rem / WALK + lifts * LIFT_S;
   $('#nav-min').textContent = $('#nav-min2').textContent = fmtMin(secs);
   $('#nav-dist').textContent = $('#nav-dist2').textContent = fmtDist(rem);
   if (!$('#nav-steps').hidden) stepList($('#nav-steplist'), st, i);
 }
 function nextStepReal() {           // real walk indoors: "next" = the tester's own correction (or the whole method if motion is off)
-  const st = NAV.r.steps, i = curStepIndex(), T = NAV.trk;
-  const nxt = st.slice(i + 1).find((x) => x.phase === 'in');
-  TestLog.event('manual_next', { s_before: T ? +T.sRaw.toFixed(2) : +NAV.s.toFixed(2), to: nxt ? +nxt.s0.toFixed(2) : 'arrive' });
-  if (!nxt || nxt.icon === 'arrive') { trueArrive('next button'); return; }
+  const seg = curSeg(), T = NAV.trk;
+  if (!seg || seg.type !== 'in') return;
+  const i = curStepIndex(), nxt = NAV.r.steps.slice(i + 1).find((x) => x.seg === NAV.seg);
+  const end = !nxt || nxt.icon === 'arrive' || nxt.icon === 'exit';
+  TestLog.event('manual_next', { s_before: T ? +T.sRaw.toFixed(2) : +NAV.s.toFixed(2), to: end ? 'segment end' : +nxt.s0.toFixed(2), seg: NAV.seg });
+  if (end) { if (isLastSeg()) trueArrive('next button'); else nextSeg(); return; }
   NAV.s = nxt.s0 + 0.01;
   if (T) { T.sRaw = NAV.s; T.lastReset = NAV.s; }
   render();
@@ -896,9 +1026,9 @@ function startGPS() {
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
 }
 function onFix(pos) {
-  S.me = [pos.coords.latitude, pos.coords.longitude]; S.acc = pos.coords.accuracy;
+  S.me = [pos.coords.latitude, pos.coords.longitude]; S.acc = pos.coords.accuracy; S.meSrc = 'gps';
   if (NAV.phase !== 'out' || !NAV.g) return;            // indoors GPS is not used
-  const t = nowMs(), pr = project(NAV.r.out, S.me), f = gpsFix(S.me, S.acc, t);
+  const t = nowMs(), pr = project(curSeg(), S.me), f = gpsFix(S.me, S.acc, t);
   TestLog.event('gps', { lat: +S.me[0].toFixed(6), lon: +S.me[1].toFixed(6), acc: Math.round(S.acc), s: +pr.s.toFixed(1), off: +pr.d.toFixed(1),
                          sw: +f.z.s.toFixed(1), d: +f.z.d.toFixed(1), sf: +NAV.g.s.toFixed(1), used: f.used, why: f.why || undefined,
                          steps: NAV.trk ? NAV.trk.outSteps : null });
@@ -922,11 +1052,11 @@ function gpsInit() {
 }
 function gpsStep(L) {                     // one step outdoors: dead reckoning along the route
   const G = NAV.g;
-  G.s = Math.min(NAV.r.out.len, G.s + L); G.P += (0.2 * L) ** 2; G.stepAt = nowMs();
+  G.s = Math.min(curSeg().len, G.s + L); G.P += (0.2 * L) ** 2; G.stepAt = nowMs();
   NAV.s = G.s;
 }
 function gpsFix(ll, acc, t) {
-  const G = NAV.g, line = NAV.r.out;
+  const G = NAV.g, line = curSeg();
   if (G.t != null) {                      // predict to now: steps already moved G.s; without recent steps, coast at the last speed
     const dt = Math.max(0, (t - G.t) / 1000);
     if (!(G.stepAt && t - G.stepAt < 3000)) G.s = Math.min(line.len, G.s + G.v * Math.min(dt, GPS_COAST_S));
@@ -955,7 +1085,7 @@ function gpsFix(ll, acc, t) {
   return { used, why, z };
 }
 function gpsAtEntrance() {                // the tester is at the building entrance: a fix near the door, or steps alone when GPS is lost
-  const G = NAV.g, line = NAV.r.out;
+  const G = NAV.g, line = curSeg();
   if (!G || NAV.phase !== 'out') return false;
   const t = nowMs(), end = line.pts[line.pts.length - 1];
   const dFix = G.fix && t - G.fixT < 10000 ? dLL(G.fix, end) : Infinity;
@@ -963,11 +1093,11 @@ function gpsAtEntrance() {                // the tester is at the building entra
   const lost = !G.usedT || t - G.usedT > GPS_LOST_S * 1000;
   if (!close && !(lost && G.s >= line.len - 3)) return false;                            // GPS lost (e.g. a roof): steps alone
   TestLog.event('entrance', { sf: +G.s.toFixed(1), d_fix: Number.isFinite(dFix) ? +dFix.toFixed(1) : null, gps_lost: lost });
-  NAV.s = line.len; if (NAV.r.inn) enterLift(); else arrive();
+  NAV.s = line.len; nextSeg();
   return true;
 }
 function outdoorMe(t) {                   // where the marker is drawn in real walk mode
-  const G = NAV.g, line = NAV.r.out;
+  const G = NAV.g, line = curSeg();
   if (!G || G.t == null) return G && G.stepAt ? along(line, G.s) : S.me || line.pts[0];
   if (!G.onRoute && G.fix) return G.fix;
   let s = G.s;
@@ -975,11 +1105,12 @@ function outdoorMe(t) {                   // where the marker is drawn in real w
   return along(line, Math.min(s, line.len));
 }
 function reroute() {
+  S.startIn = null; S.origin = { type: 'me' };
   const r = planRoute(NAV.r.dest, NAV.r.kind);
   if (!r) return;
   TestLog.event('reroute', { lat: +S.me[0].toFixed(6), lon: +S.me[1].toFixed(6) });
   toast('ออกนอกเส้นทาง กำลังหาเส้นทางใหม่');
-  S.origin = { type: 'me' }; startNav(r);
+  startNav(r);
 }
 
 // ---------- lost position → photo of the nearest room sign → OCR
@@ -1020,7 +1151,7 @@ function typeRoom() {
   const inp = document.createElement('input'); inp.placeholder = 'เช่น SCL607 หรือ 607'; inp.id = 'typed-room'; inp.autocomplete = 'off';
   dialog({ ico: LOST_ICO, title: 'ห้องที่อยู่ใกล้ที่สุด', text: 'พิมพ์เลขห้องจากป้ายหน้าห้องที่คุณยืนอยู่', extra: [inp],
     buttons: [{ t: 'ยกเลิก', ghost: true, on: () => dlgLost(false) }, { t: 'ยืนยัน', on: () => {
-      const room = matchSign(inp.value.toUpperCase(), NAV.r.inn.floor);
+      const room = matchSign(inp.value.toUpperCase(), curSeg().floor);
       TestLog.event('typed_room', { text: inp.value.slice(0, 20), room: room ? room.code : null });
       if (room) recover(room, 'พิมพ์'); else dlgLost(true, 'ไม่พบห้องนี้บนชั้นนี้ ลองพิมพ์อีกครั้งหรือถ่ายรูปป้าย');
     } }] });
@@ -1068,8 +1199,8 @@ async function ocr(canvas) {
 async function readSign(img, w, h, previewUrl, src) {
   dialog({ ico: '<div class="ants"><img src="icons/ant4.svg" alt=""><img src="icons/ant3.svg" alt=""><img src="icons/ant2.svg" alt=""><img src="icons/ant1.svg" alt=""></div>',
     title: 'กำลังแทรกสัญญาณใหม่', text: 'กรุณารอสักครู่...', img: previewUrl });
-  const fl = NAV.r.inn.floor;
-  const log = { at: new Date().toISOString(), floor: fl, tesseract: '', openthai: '', engine: null, room: null, cands: [] };
+  const fl = curSeg().floor;
+  const log = { at:new Date().toISOString(), floor: fl, tesseract: '', openthai: '', engine: null, room: null, cands: [] };
   let cands = [], loadFail = 0;
   // layer 1: Tesseract (Latin letters and digits), normal then inverted
   try {
@@ -1128,22 +1259,22 @@ function matchSigns(text, floor) {        // every room number on an N7 sign, mo
 function matchSign(text, floor) { return matchSigns(text, floor)[0] || null; }   // a typed room number: the best match only
 function recover(room, how) {
   closeDialog(); $('#dim').hidden = true;
-  const r = NAV.r, F = N7.floors[r.inn.floor], door = F.doors[room.id];
-  const inn = indoorPlan(r.inn.floor, r.dest.id, door.x);
-  r.inn = inn;
-  r.steps = r.steps.filter((x) => x.phase !== 'in').concat(inn.steps);
+  const r = NAV.r, seg = curSeg(), fl = seg.floor;
+  const door = nearestDoor(fl, room.id, along(seg, NAV.s)[0]);   // the room's door nearest to where the dot was
+  const leg = floorLeg(fl, door, seg.to);                         // re-plan this floor's leg from that door to where it was going
+  r.segs[NAV.seg] = leg; flatSteps(r);
   NAV.lost = false; NAV.s = 0;
-  const atDest = room.id === r.dest.id || inn.len <= 1.0;          // the sign is the destination's own, or a door within 1 m of it
-  TestLog.event('recover', { room: room.code, how, door_x: door.x, new_in_m: +inn.len.toFixed(1), at_dest: atDest });
+  const atDest = isLastSeg() && (room.id === r.dest.id || leg.len <= 1.0);   // the sign is the destination's own, or a door within 1 m of it
+  TestLog.event('recover', { room: room.code, how, door_x: door.x, new_in_m: +leg.len.toFixed(1), at_dest: atDest });
   if (NAV.trk) Object.assign(NAV.trk, { sRaw: 0, lastReset: 0, segSteps: 0, arrPrompted: false, segFrom: atDest ? 'sign at door' : 'sign' });
-  drawIndoorRoute();
+  drawSeg(leg);
   render();
   toast(`พบตำแหน่งแล้ว: หน้าห้อง ${room.code} (จาก${how})`);
   if (atDest && S.mode === 'real' && NAV.phase === 'in' && NAV.trk) showArrivePrompt();   // nothing left to walk: ask now, not after a step
 }
 async function sampleSign() {
   // a printed-style sign for the room nearest to where the position was lost, for testers who are not at N7
-  const r = NAV.r, F = N7.floors[r.inn.floor], pos = along(r.inn, NAV.s);
+  const r = NAV.r, seg = curSeg(), F = N7.floors[seg.floor], pos = along(seg, NAV.s);
   let best = null, bd = Infinity;
   for (const [code, d] of Object.entries(F.doors)) {
     if (!BYID[code] || d.approx || code === r.dest.id) continue;
@@ -1209,7 +1340,7 @@ function runScenario(sc) {
   S.scenario = sc; S.origin = { type: 'me' }; S.place = null;
   TestLog.startRun({ kind: 'scenario', scenario: SCENARIOS.indexOf(sc) + 1, title: sc.title, mode: S.mode });
   const atN7 = sc.start === 'N7';          // the tester is already at N7: start from its entrance, no GPS needed
-  if (S.mode === 'sim' || atN7) S.me = startPointOf(sc.start);
+  if (S.mode === 'sim' || atN7) { S.me = startPointOf(sc.start); S.meSrc = 'set'; }
   goHome();
   if (S.me) cmap.setView(S.me, 17.5, { animate: false });
   if (S.mode === 'real' && !atN7) locateOnce();
@@ -1217,7 +1348,7 @@ function runScenario(sc) {
 function freeUse() {
   S.scenario = null; S.origin = { type: 'me' };
   TestLog.startRun({ kind: 'free', mode: S.mode });
-  if (S.mode === 'sim' && !S.me) S.me = startPointOf('N16');
+  if (S.mode === 'sim' && !S.me) { S.me = startPointOf('N16'); S.meSrc = 'set'; }
   goHome();
   if (S.mode === 'real') locateOnce();
 }
@@ -1302,11 +1433,11 @@ function locateOnce() {
   if (!('geolocation' in navigator)) { toast('อุปกรณ์นี้ใช้ GPS ไม่ได้'); return; }
   toast('กำลังหาตำแหน่งของคุณ...');
   navigator.geolocation.getCurrentPosition((p) => {
-    S.me = [p.coords.latitude, p.coords.longitude]; S.acc = p.coords.accuracy;
+    S.me = [p.coords.latitude, p.coords.longitude]; S.acc = p.coords.accuracy; S.meSrc = 'gps';
     placeMe(); cmap.setView(S.me, 18, { animate: false });
     if (dLL(S.me, [13.6513, 100.4945]) > 900) toast('คุณอยู่นอกมหาวิทยาลัย ใช้ปุ่ม "เส้นทาง" เพื่อเปิด Google Maps มาที่ มจธ.', 4500);
     else toast(`พบตำแหน่งแล้ว (คลาดเคลื่อน ±${Math.round(S.acc)} ม.)`);
-  }, () => { toast('หาตำแหน่งไม่ได้ ใช้ตำแหน่งจำลองแทน'); S.me = startPointOf('N16'); placeMe(); },
+  }, () => { toast('หาตำแหน่งไม่ได้ ใช้ตำแหน่งจำลองแทน'); S.me = startPointOf('N16'); S.meSrc = 'set'; placeMe(); },
   { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
 }
 function offCampus() {
@@ -1350,9 +1481,11 @@ function wire() {
     if (offCampus()) { window.open(googleMapsLink(buildingOf(S.place)), '_blank', 'noopener'); return; }
     if (S.mode === 'real') askMotion();                             // inside the tap, so iPhone can ask
     S.origin = { type: 'me' }; S.routeKind = 'fast';
-    const r = planRoute(S.place, 'fast');
-    if (!r) { toast('หาเส้นทางไปที่นี่ไม่ได้'); return; }
-    S.route = r; startLoading(() => startNav(r));
+    askWhere(() => {                                                 // inside N7 already? then start on that floor (T1-S4)
+      const r = planRoute(S.place, 'fast');
+      if (!r) { toast('หาเส้นทางไปที่นี่ไม่ได้'); return; }
+      S.route = r; startLoading(() => startNav(r));
+    });
   });
   $('#btn-finish').addEventListener('click', () => {
     goHome();
@@ -1390,10 +1523,16 @@ function wire() {
     for (const f of N7_FLOORS) {
       const b = document.createElement('button'); b.textContent = `ชั้น ${f}`;
       b.disabled = !N7.floors[f]; b.classList.toggle('on', f === S.viewFloor);
-      b.addEventListener('click', () => { m.hidden = true; drawFloor(f, NAV.r && NAV.r.dest.id); if (NAV.r && NAV.r.inn && NAV.r.inn.floor === f) drawIndoorRoute(); else C.froute.clearLayers(); fitFloor(f); });
+      b.addEventListener('click', () => {
+        m.hidden = true;
+        const seg = NAV.phase !== 'done' && curSeg();
+        if (seg && seg.type !== 'out' && segFloor(seg) === f) { drawSeg(seg); render(); }         // back to the tester's own floor
+        else { drawFloor(f, NAV.r && NAV.r.dest.floor === f ? NAV.r.dest.id : null); C.froute.clearLayers(); C.fme.remove(); }
+        fitFloor(f);
+      });
       m.appendChild(b);
     }
-    const sm = document.createElement('small'); sm.textContent = 'ชั้นอื่นยังไม่มีแผนผัง'; m.appendChild(sm);
+    if (N7_FLOORS.some((f) => !N7.floors[f])) { const sm = document.createElement('small'); sm.textContent = 'ชั้นอื่นยังไม่มีแผนผัง'; m.appendChild(sm); }
     m.hidden = false;
   });
   for (const b of document.querySelectorAll('.modeswitch button')) {
