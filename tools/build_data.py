@@ -3,8 +3,12 @@
 python tools/build_data.py <overpass_campus_raw.json> <N7-Pilot/data dir>
 
 Writes data/campus.json (OpenStreetMap extract, ODbL), data/places.json (buildings + rooms + aliases)
-and data/n7.json (schematic floors 2 and 6 + indoor walk graph). The schematic keeps only room boxes,
-the corridor and door positions: no walls traced from the blueprints are published.
+and data/n7.json (schematic floors B, 1-10 + indoor walk graph). The schematic keeps only room boxes,
+the corridor, the lift core box and door positions: no walls traced from the blueprints are published.
+
+Floors 2 and 6 were reviewed by three people and are built exactly as before (their only additions are
+doors[code].more and lift.box). The other floors are drafts ("draft": true) built from each floor's
+access.json (tools/extract_floor.py) and data/map/lift_core.json (tools/lift_core.py) in N7-Pilot.
 """
 import csv, json, math, re, sys
 from collections import defaultdict
@@ -201,26 +205,23 @@ for code, th, en, aliases, cats, rx in REG:
         rec.update({"c": b["c"], "osm": b["osm"], "entrance_node": gi, "entrance": gnodes[gi], "entrance_gap_m": round(gd)})
     places.append(rec)
 
-# ---------------------------------------------------------------- N7 rooms (floors 2 and 6 only)
+# ---------------------------------------------------------------- N7 rooms (all levels: B, 1-10)
 def scl(code):
     m = re.match(r"N7-(\d{3})(.*)$", code)
     return ("SCL" + m.group(1) + m.group(2)) if m else code
 
-rooms_csv = [r for r in csv.DictReader(open(pilot / "rooms" / "n7_rooms_all.csv", encoding="utf-8-sig")) if r["floor"] in ("2", "6")]
+FLOORS = ["B", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+REVIEWED = ("6", "2")        # checked by three reviewers (2026-10-08): built exactly as before, plus "more" and lift.box
+rooms_csv = list(csv.DictReader(open(pilot / "rooms" / "n7_rooms_all.csv", encoding="utf-8-sig")))
 NICK = {"N7-216": ["Slope600", "Slope 600", "สโลป600", "สโลป 600", "Slope"]}
+cores = json.load(open(pilot / "map" / "lift_core.json", encoding="utf-8"))["floors"]
 
-n7 = {"building": "N7", "floors": {}}
-for fl in ("6", "2"):
-    d = pilot / "map" / f"floor{fl}"
-    rf = json.load(open(d / "rooms.geojson", encoding="utf-8"))["features"]
-    cps = json.load(open(d / "checkpoints.geojson", encoding="utf-8"))["features"]
-    grid = json.load(open(d / "grid.json", encoding="utf-8"))
-    cy = grid["corridor"]["centre_y_local"]
-    x0, x1 = grid["corridor"]["x_from_local"], grid["corridor"]["x_to_local"]
+def boxes_of(rf, corridor_code):
+    """Room boxes from the resolved polygons (the corridor itself is drawn from corridor x0/x1)."""
     boxes = []
     for f in rf:
         p = f["properties"]
-        if f["geometry"]["type"] != "Polygon" or p["code"].endswith("/603") or p["code"].endswith("/205"):
+        if f["geometry"]["type"] != "Polygon" or p["code"] == corridor_code:
             continue
         cs = f["geometry"]["coordinates"][0]
         xs, ys = [c[0] for c in cs], [c[1] for c in cs]
@@ -229,37 +230,104 @@ for fl in ("6", "2"):
         kind = "lift" if "lift" in p["type_en"].lower() else "wc" if "toilet" in p["type_en"].lower() else "room"
         boxes.append({"code": p["code"], "label": scl(p["code"]), "type_th": p["type_th"], "kind": kind,
                       "box": [round(min(xs), 1), round(min(ys), 1), round(max(xs), 1), round(max(ys), 1)]})
-    # corridor stops: every checkpoint on the centreline, with the rooms reached there and the side
-    stops = []
-    for f in cps:
-        p = f["properties"]; x, y = f["geometry"]["coordinates"]
-        if p["kind"] in ("grid", "door", "column") and abs(y - cy) < 0.6:
-            side = ""
-            m = re.findall(r"(N7[-/][\w()\-]+)[^/]*?\((N|S)[,)]", p.get("landmark") or "")
-            stops.append({"id": p["id"], "x": round(x, 2), "rooms": [[c, s] for c, s in m], "landmark": p.get("landmark") or ""})
-    stops.sort(key=lambda s: s["x"])
-    n7["floors"][fl] = {"corridor": {"y": cy, "x0": round(x0, 2), "x1": round(x1, 2)}, "boxes": boxes, "stops": stops,
-                        "lift": {"x": 63.0, "y": cy - 3.2, "door_x": 63.0}}
-# room → corridor stop (door) mapping, with the vestibule and hall exceptions
-for fl, F in n7["floors"].items():
-    where = {}
-    for s in F["stops"]:
-        for c, side in s["rooms"]:
-            where.setdefault(c, (s["x"], side))
-    if fl == "6":
-        for c in ("N7-600", "N7-601", "N7-602"):
-            where.setdefault(c, (27.0, "S"))  # vestibule mouth at C07 (south side)
-    F["doors"] = {c: {"x": x, "side": side} for c, (x, side) in where.items()}
-    for b in F["boxes"]:
-        if b["code"] not in F["doors"] and b["kind"] == "room":
-            cx = (b["box"][0] + b["box"][2]) / 2
-            side = "N" if (b["box"][1] + b["box"][3]) / 2 > F["corridor"]["y"] else "S"
-            F["doors"][b["code"]] = {"x": round(min(max(cx, F["corridor"]["x0"]), F["corridor"]["x1"]), 1), "side": side, "approx": True}
+    return boxes
+
+def lift_of(fl, cy):
+    """Lift stop as before (x 63.0, the lobby door), plus the measured lift/stair core box."""
+    rec = {"x": 63.0, "y": cy - 3.2, "door_x": 63.0}
+    c = cores.get(fl) or {}
+    if c.get("core_x") and c.get("core_y"):
+        rec["box"] = [c["core_x"][0], c["core_y"][0], c["core_x"][1], c["core_y"][1]]
+    return rec
+
+def more_doors(first, others):
+    """Other corridor doors of a room, sorted by x, without repeats closer than 0.3 m (to the first or each other)."""
+    more = []
+    for x, side in sorted(others):
+        if abs(x - first[0]) < 0.3 or (more and abs(x - more[-1]["x"]) < 0.3):
+            continue
+        more.append({"x": x, "side": side})
+    return more
+
+n7 = {"building": "N7", "version": 2, "entrance_floor": "1", "floors": {}}
+for fl in FLOORS:
+    d = pilot / "map" / f"floor{fl}"
+    rf = json.load(open(d / "rooms.geojson", encoding="utf-8"))["features"]
+    grid = json.load(open(d / "grid.json", encoding="utf-8"))
+    cy = grid["corridor"]["centre_y_local"]
+    x0, x1 = grid["corridor"]["x_from_local"], grid["corridor"]["x_to_local"]
+    F = {"corridor": {"y": cy, "x0": round(x0, 2), "x1": round(x1, 2)}, "boxes": boxes_of(rf, grid["corridor"]["code"]),
+         "lift": lift_of(fl, cy)}
+    n7["floors"][fl] = F
+    if fl in REVIEWED:
+        # corridor stops: every checkpoint on the centreline, with the rooms reached there and the side
+        cps = json.load(open(d / "checkpoints.geojson", encoding="utf-8"))["features"]
+        stops = []
+        for f in cps:
+            p = f["properties"]; x, y = f["geometry"]["coordinates"]
+            if p["kind"] in ("grid", "door", "column") and abs(y - cy) < 0.6:
+                m = re.findall(r"(N7[-/][\w()\-]+)[^/]*?\((N|S)[,)]", p.get("landmark") or "")
+                stops.append({"id": p["id"], "x": round(x, 2), "rooms": [[c, s] for c, s in m], "landmark": p.get("landmark") or ""})
+        stops.sort(key=lambda s: s["x"])
+        # room -> corridor stop (door): the first (west-most) one as before; the others go to "more"
+        where, every = {}, defaultdict(list)
+        for s in stops:
+            for c, side in s["rooms"]:
+                where.setdefault(c, (s["x"], side))
+                every[c].append((s["x"], side))
+        if fl == "6":
+            for c in ("N7-600", "N7-601", "N7-602"):
+                where.setdefault(c, (27.0, "S"))  # vestibule mouth at C07 (south side)
+        F["doors"] = {c: {"x": x, "side": side} for c, (x, side) in where.items()}
+        for c, lst in every.items():
+            more = more_doors(where[c], lst[1:])
+            if more:
+                F["doors"][c]["more"] = more
+        for b in F["boxes"]:
+            if b["code"] not in F["doors"] and b["kind"] == "room":
+                cx = (b["box"][0] + b["box"][2]) / 2
+                side = "N" if (b["box"][1] + b["box"][3]) / 2 > F["corridor"]["y"] else "S"
+                F["doors"][b["code"]] = {"x": round(min(max(cx, F["corridor"]["x0"]), F["corridor"]["x1"]), 1), "side": side, "approx": True}
+        continue
+    # draft floors: from access.json (door chains found on the plan; "approx" where the plan shows no usable door)
+    acc = json.load(open(d / "access.json", encoding="utf-8"))
+    F["draft"] = True
+    clamp = lambda v: round(min(max(v, F["corridor"]["x0"]), F["corridor"]["x1"]), 1)
+
+    def side_of(y, fallback_y):
+        return "N" if y > cy + 0.3 else "S" if y < cy - 0.3 else ("N" if fallback_y > cy else "S")
+    doors = {}
+    for code, r in acc["rooms"].items():
+        lab = r["label"]
+        cds = [cd for cd in r["corridor_doors"] if cd["on_corridor"] and cd["kind"] not in ("cubicle", "shaft")]
+        if r["how"] == "direct" and cds:            # straight off the corridor: west-most door first, the others in "more"
+            first = (round(cds[0]["x"], 2), side_of(cds[0]["y"], lab[1]))
+            rec = {"x": first[0], "side": first[1]}
+            more = more_doors(first, [(round(cd["x"], 2), side_of(cd["y"], lab[1])) for cd in cds[1:]])
+            if more:
+                rec["more"] = more
+        elif r["how"] in ("direct", "via") and r.get("x") is not None:     # door(s) off a recess or through another space
+            rec = {"x": r["x"], "side": side_of(r["door"][1], lab[1])}
+            if r.get("via"):
+                rec["via"] = r["via"]
+        elif r.get("x") is not None and (not r.get("via") or math.dist(r["via"][-1], lab) <= 15.0):
+            # no door on the plan: walked to the label / to the spot next to the room (only if it ends near the room)
+            rec = {"x": r["x"], "side": side_of(lab[1], lab[1]), "approx": True}
+            if r.get("via"):
+                rec["via"] = r["via"]
+        else:                                       # not connected: the corridor point nearest the room
+            rec = {"x": clamp(lab[0]), "side": side_of(lab[1], lab[1]), "approx": True}
+        if r.get("shared_with"):                    # one open-plan space holds several "rooms": its door, not the room's
+            rec["approx"] = True
+        doors[code] = rec
+    F["doors"] = doors
+    if acc.get("entrance"):                          # floor 1: from the corridor point out to the main door
+        F["entrance"] = {"x": acc["entrance"]["x"], "side": "S", "via": acc["entrance"]["via"],
+                         # the short way from the main door to the lifts: through the lift lobby's south-east double door
+                         # (F1-D41 at x 65.8, y 1.4) instead of round by the corridor (about 10 m instead of 20). Site check D1.
+                         "lift_via": [[65.8, 1.4]]}
 # floor 2: the walkway from the corridor to the lecture hall N7-216 (checkpoints R01..R04, H01)
 n7["floors"]["2"]["doors"]["N7-216"] = {"x": 87.0, "side": "S", "via": [[87.0, 9.2], [87.0, -8.9], [92.8, -12.9], [93.9, -17.8], [95.8, -20.6]]}
-# publish only what the app draws and routes on: room boxes, corridor, door positions (no checkpoint notes)
-for F in n7["floors"].values():
-    F.pop("stops", None)
 
 for r in rooms_csv:
     code = r["code"]
@@ -268,7 +336,7 @@ for r in rooms_csv:
         names = NICK[code] + names
     places.append({"id": code, "kind": "room", "code": scl(code), "official": code, "building": "N7", "floor": r["floor"],
                    "th": r["type_th"], "aliases": names, "nick": NICK.get(code, [None])[0],
-                   "mapped": code in n7["floors"][r["floor"]]["doors"]})
+                   "mapped": code in n7["floors"].get(r["floor"], {}).get("doors", {})})
 
 campus = {"attribution": "© OpenStreetMap contributors (ODbL)", "buildings": [{"c": b["c"], "poly": b["poly"], "name": b["name"] or b["ref"], "area": b["area"]} for b in buildings if hav(b["c"], CAMPUS_C) < 900],
           "roads": roads, "water": water, "waterlines": waterlines, "green": green,
