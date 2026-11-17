@@ -1109,6 +1109,7 @@ function arrive() {
   $('#place-thumb').innerHTML = thumbSVG(p);
   $('#place-note').hidden = true;
   $('#place-btns').hidden = true; $('#btn-finish').hidden = false; $('#place-close').hidden = true; $('#btn-layers').hidden = true;
+  C.fme.remove();                            // arrived: the destination pin, not the walking dot (as in Figma's arrival frame)
   if (last && last.type === 'in') { drawFloor(last.floor, p.id); C.froute.clearLayers(); showMap('floor'); const e = last.pts[last.pts.length - 1]; fmap.setView([e[1] - 8, e[0]], 3, { animate: false }); }
   else showMap('campus');
 }
