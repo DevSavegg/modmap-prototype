@@ -238,7 +238,7 @@ const S = {
 // ---------- maps
 let cmap, fmap;
 const C = {};
-const meIcon = (lost) => L.divIcon({ className: '', html: `<div class="me-marker${lost ? ' lost' : ''}"><i></i></div>`, iconSize: [64, 64], iconAnchor: [32, 32] });
+const meIcon = (lost) => L.divIcon({ className: '', html: `<div class="me-marker${lost ? ' lost' : ''}"><b class="beam"></b><i></i></div>`, iconSize: [64, 64], iconAnchor: [32, 32] });
 const pinIcon = () => L.divIcon({ className: 'pin-marker', html: '<img src="icons/pin.svg" alt="">', iconSize: [32, 48], iconAnchor: [16, 46] });
 const pinLabel = (t) => L.divIcon({ className: 'pin-label', html: esc(t), iconSize: [140, 20], iconAnchor: [-20, 36] });
 
@@ -883,6 +883,8 @@ function startNav(route) {
   $('#simbadge').hidden = $('#simctl').hidden = S.mode !== 'sim';
   $('#sim-play').textContent = '❚❚'; $('#sim-speed').textContent = `×${NAV.speed}`;
   $('#nav-steps').hidden = true; $('#navbar').hidden = false;
+  ROT.mode = 'route'; $('#btn-compass').hidden = false; $('#btn-compass').classList.remove('north');   // T1-S13
+  if (S.mode === 'real') headingOn();
   C.route.clearLayers(); C.pins.clearLayers(); C.hl.clearLayers();
   const outs = route.segs.filter((s) => s.type === 'out');
   for (const s of outs) {
@@ -963,6 +965,7 @@ function stopNav() {
   NAV.watch = null;
   $('#arrivecard').hidden = true; $('#atdoor').hidden = true; $('#trackbadge').hidden = true; $('#liftcard').hidden = true;
   if (CAM.stream) closeCamera();
+  headingOff(); setBearing('c', null); setBearing('f', null); $('#btn-compass').hidden = true;   // maps back to as drawn
   if (!CAL.on) Motion.stop();
 }
 function advance(ds) {                       // simulation: walk ds metres along the current segment
@@ -1121,6 +1124,7 @@ function render() {
   $('#nav-min').textContent = $('#nav-min2').textContent = fmtMin(secs);
   $('#nav-dist').textContent = $('#nav-dist2').textContent = fmtDist(rem);
   if (!$('#nav-steps').hidden) stepList($('#nav-steplist'), st, i);
+  turnMaps(seg); drawHeading();              // the way ahead up, and where the phone points (T1-S13)
 }
 function nextStepReal() {           // real walk indoors: "next" = the tester's own correction (or the whole method if motion is off)
   const seg = curSeg(), T = NAV.trk;
@@ -1229,6 +1233,88 @@ function reroute() {
   TestLog.event('reroute', { lat: +S.me[0].toFixed(6), lon: +S.me[1].toFixed(6) });
   toast('ออกนอกเส้นทาง กำลังหาเส้นทางใหม่');
   startNav(r);
+}
+
+// ---------- heading and a map that turns with the walk (T1-S13)
+// web-0.3.1's maps were always north-up and the marker had no direction, so a tester who had lost their bearings couldn't tell
+// which road they faced. Now, during navigation, the map turns so that the way ahead on the route points up (indoors too), and
+// outdoors the marker shows a beam where the phone points (compass). The compass button switches to a fixed map and back.
+// Indoors there is no beam: the floor plans' true north isn't known yet, so a compass can't be placed on them.
+const HD = { deg: null, t: 0, src: null, on: false };          // the phone's compass heading, degrees clockwise from north
+function compassOf(e) {
+  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) return { deg: e.webkitCompassHeading, src: 'ios' };
+  if (!e.absolute || e.alpha == null) return null;
+  // Android: the phone's top edge and back, in east/north terms; the way the user faces = their horizontal parts added together
+  // (flat phone: the top edge; upright phone: the back; in between: both point ahead)
+  const a = e.alpha * RAD, b = (e.beta || 0) * RAD, g = (e.gamma || 0) * RAD;
+  const fe = -Math.sin(a) * Math.cos(b) - (Math.cos(a) * Math.sin(g) + Math.sin(a) * Math.sin(b) * Math.cos(g));
+  const fn = Math.cos(a) * Math.cos(b) - (Math.sin(a) * Math.sin(g) - Math.cos(a) * Math.sin(b) * Math.cos(g));
+  if (Math.hypot(fe, fn) < 0.2) return null;
+  return { deg: (Math.atan2(fe, fn) / RAD + 360) % 360, src: 'android' };
+}
+function onOrient(e) {
+  const c = compassOf(e); if (!c) return;
+  const d = (c.deg + ((screen.orientation && screen.orientation.angle) || 0) + 360) % 360;
+  HD.deg = HD.deg == null ? d : (HD.deg + 0.25 * (((d - HD.deg + 540) % 360) - 180) + 360) % 360;   // smooth the compass's jitter
+  HD.src = c.src; HD.t = Date.now();
+  drawHeading();
+}
+function headingOn() {
+  if (HD.on) return;
+  HD.on = true;
+  window.addEventListener('ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation', onOrient);
+}
+function headingOff() {
+  HD.on = false; HD.deg = null;
+  window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient);
+}
+function drawHeading() {                    // the beam on the outdoor marker
+  const el = C.me.getElement(), m = el && el.querySelector('.me-marker');
+  if (!m) return;
+  const fresh = HD.deg != null && Date.now() - HD.t < 3000 && NAV.phase === 'out';
+  m.classList.toggle('hd', fresh);
+  if (fresh) m.style.setProperty('--beam', `${HD.deg}deg`);   // the marker turns with the map, so the beam is set against north
+}
+const ROT = { mode: 'route', c: { on: false, deg: 0 }, f: { on: false, deg: 0 } };   // mode: 'route' (way ahead up) or 'fixed'
+function setBearing(which, deg) {           // turn a map so that `deg` points up; null = back to as drawn
+  const el = $(which === 'f' ? '#fmap' : '#cmap'), m = which === 'f' ? fmap : cmap, R = ROT[which];
+  if (deg == null) {
+    if (!R.on) return;
+    Object.assign(el.style, { width: '', height: '', left: '', top: '', right: '', bottom: '', transform: '' });
+    el.style.setProperty('--map-rot', '0deg');
+    Object.assign(R, { on: false, deg: 0 });
+    m.dragging.enable(); m.doubleClickZoom.enable(); m.options.touchZoom = true;
+    m.invalidateSize(false);
+    return;
+  }
+  if (!R.on) {                              // a square as big as the screen's diagonal, centred, so no corner shows when it turns
+    const W = $('#app').clientWidth, H = $('#app').clientHeight, D = Math.ceil(Math.hypot(W, H));
+    Object.assign(el.style, { width: `${D}px`, height: `${D}px`, left: `${(W - D) / 2}px`, top: `${(H - D) / 2}px`, right: 'auto', bottom: 'auto' });
+    R.on = true;
+    m.dragging.disable(); m.doubleClickZoom.disable(); m.options.touchZoom = 'center';   // gestures can't follow a turned map
+    m.invalidateSize(false);
+  }
+  const diff = ((deg - R.deg + 540) % 360) - 180;                      // turn the short way round
+  if (Math.abs(diff) < 2) return;
+  R.deg += diff;
+  el.style.transform = `rotate(${-R.deg}deg)`;
+  el.style.setProperty('--map-rot', `${R.deg}deg`);                 // labels and pins turn back, so they stay upright
+}
+function wayAhead(seg) {                    // the direction of the route where the dot is, degrees clockwise from the map's up
+  if (seg.type === 'out') {                 // outdoors: across ±6 m, so small bends in the path don't swing the map
+    const a = xy(along(seg, Math.max(0, NAV.s - 6))), b = xy(along(seg, Math.min(seg.len, NAV.s + 6)));
+    return dXY(a, b) < 1 ? null : bearing(a, b);
+  }
+  if (seg.type !== 'in' || seg.pts.length < 2) return null;
+  let i = 1;                                // indoors: the piece the dot is on, not the one after a corner it is waiting at (T1-S10)
+  while (i < seg.pts.length - 1 && seg.cum[i] < NAV.s - 0.05) i++;
+  return dXY(seg.pts[i - 1], seg.pts[i]) < 0.1 ? null : bearing(seg.pts[i - 1], seg.pts[i]);
+}
+function turnMaps(seg) {
+  const on = ROT.mode === 'route';
+  if (seg.type === 'out') { setBearing('c', on ? wayAhead(seg) ?? ROT.c.deg : null); setBearing('f', null); }
+  else if (seg.type === 'in') setBearing('f', on ? wayAhead(seg) ?? ROT.f.deg : null);
+  $('#compass-needle').style.transform = `rotate(${-(seg.type === 'out' ? ROT.c.deg : ROT.f.deg)}deg)`;   // where the map's up is
 }
 
 // ---------- lost position → photo of the nearest room sign → OCR
@@ -1514,7 +1600,10 @@ function freeUse() {
 
 // ---------- motion sensors: asked inside a tap (iPhone asks, and so does Chrome on Android from about version 157)
 function askMotion() {
-  return Motion.ensurePermission().then((p) => {
+  const asked = Motion.ensurePermission();  // first: the step counter depends on it
+  // iPhone: the compass (T1-S13) needs its own call, also inside the tap; it shares the motion prompt
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') DeviceOrientationEvent.requestPermission().catch(() => {});
+  return asked.then((p) => {
     const t = TestLog.tester();
     if (t && t.consent && t.census && t.census.permission !== p) {   // the answer changed, e.g. allowed after a refusal: measure again
       Motion.census().then((c) => { TestLog.setCensus(c); if (!$('#welcome').hidden) renderTesterStatus(); });
@@ -1668,6 +1757,12 @@ function wire() {
   $('#sim-play').addEventListener('click', () => { NAV.playing = !NAV.playing; $('#sim-play').textContent = NAV.playing ? '❚❚' : '▶'; });
   $('#sim-speed').addEventListener('click', () => { const v = [1, 4, 8, 16]; NAV.speed = v[(v.indexOf(NAV.speed) + 1) % v.length]; $('#sim-speed').textContent = `×${NAV.speed}`; });
   $('#lift-ok').addEventListener('click', () => liftDone());
+  $('#btn-compass').addEventListener('click', () => {           // way ahead up ⇄ the map as drawn (T1-S13)
+    ROT.mode = ROT.mode === 'route' ? 'fixed' : 'route';
+    $('#btn-compass').classList.toggle('north', ROT.mode === 'fixed');
+    TestLog.event('map_mode', { mode: ROT.mode });
+    render();
+  });
   $('#lift-in').addEventListener('click', () => { TestLog.event('lift_in', {}); toast('บันทึกแล้ว กดอีกปุ่มเมื่อออกจากลิฟต์'); });
   $('#instr-next').addEventListener('click', nextStepReal);
   $('#atdoor').addEventListener('click', () => trueArrive('at-door button'));

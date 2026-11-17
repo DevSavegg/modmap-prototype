@@ -202,6 +202,31 @@ Each item gives what was reported, the cause found, the change made, and the bef
     - During navigation a tap changes nothing.
 
 #### T1-S13: heading
+- **Reported:** the map and the marker don't turn with the direction the tester faces, unlike Google Maps, so someone who has lost their bearings can't tell which road they face. The team had already planned this.
+- **Cause (web-0.3.1):** the maps were always north-up (the floor plans as drawn), and the marker was a plain dot.
+- **Change:**
+  - **Turning map:** during navigation, the map turns so that the way ahead on the route points up, outdoors and on the floor plans.
+    - Outdoors it follows the route across ±6 m, so small bends don't swing it.
+    - Indoors it follows the piece of corridor the dot is on. So it doesn't turn before the tester does: the dot waits at the corner (T1-S10).
+    - Labels and pins stay upright.
+  - **Compass button:** at the right of the screen. It switches to a fixed map (as drawn) and back, and its needle shows where the map's north is.
+  - **Beam:** outdoors, the marker shows where the phone points, from the compass.
+    - iPhone: `webkitCompassHeading`, which asks for permission together with the motion sensors.
+    - Android: `deviceorientationabsolute`.
+  - **While the map is turned:** dragging is off, and pinch-zoom zooms about the centre.
+  - **Logs:** `map_mode` records switches.
+- **Check (desk test):**
+  - Before: the map stays north-up throughout, and the marker has no direction.
+  - After, walking the S2 → SCL607 route in simulation:
+    - outdoors the map follows the route;
+    - on floor 6, after the turn out of the lift, it turns −90° so the corridor runs up the screen;
+    - a simulated compass reading of east draws the beam at 90°;
+    - the compass button switches to the fixed map and back;
+    - stopping navigation restores the maps.
+- **Limits:**
+  - No beam indoors: the floor plans' true north isn't known yet, so a compass can't be placed on them.
+    - It could be derived: from the long axis of N7's map footprint, with the entrance known to be on the south side.
+  - Not yet tried on real phones. Compass readings indoors are disturbed by steel, which is another reason the indoor map follows the route, not the compass.
 
 #### T1-R1: every N7 floor
 
