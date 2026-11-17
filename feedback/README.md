@@ -184,6 +184,22 @@ Each item gives what was reported, the cause found, the change made, and the bef
   - The dialog's own wording comes from the Figma design and is unchanged here.
 
 #### T1-S12: pick a place on the map
+- **Reported:** testers wanted to tap the map to pick a place or drop a pin, as in Google Maps, instead of only searching.
+- **Cause (web-0.3.1):** the maps ignored taps. Places could be reached only through search and the quick-search chips.
+- **Change:**
+  - On the home and place screens:
+    - Tapping a building opens its card, as if it had been searched.
+    - Tapping open ground drops a pin, with a card "หมุดที่ปักไว้" (dropped pin) naming the nearest building. "เส้นทาง" / "เริ่มนำทาง" route to it along the campus paths, then straight to the pin.
+    - On a floor plan, tapping a room opens that room.
+  - Taps are ignored during route preview and navigation, so a stray tap can't change the trip.
+  - **Logs:** `map_tap` records what was tapped.
+- **Check (desk test, both builds):**
+  - Before: a tap on N10 does nothing.
+  - After:
+    - A tap on N10 opens N10.
+    - A tap on open ground 60 m east of it drops a pin "ใกล้ N5 …", with a 394 m route ending exactly at the pin.
+    - A tap on SCL604 in the floor-6 plan opens SCL604 with the plan shown.
+    - During navigation a tap changes nothing.
 
 #### T1-S13: heading
 

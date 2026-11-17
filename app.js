@@ -212,11 +212,11 @@ function titleOf(p, hit) {
   return p.code;
 }
 function subOf(p, long) {
-  if (p.kind === 'building') return p.th;
+  if (p.kind === 'building' || p.kind === 'pin') return p.th;
   const b = BYID[p.building], bn = b ? b.th : p.building;
   return long ? `${bn} (${p.building}) ชั้น ${p.floor}` : `${bn} ชั้น ${p.floor}`;
 }
-function buildingOf(p) { return p.kind === 'building' ? p : BYID[p.building]; }
+function buildingOf(p) { return p.kind === 'building' || p.kind === 'pin' ? p : BYID[p.building]; }   // a dropped pin is its own "building"
 
 const RECENT_KEY = 'mm_recent';
 function recents() {
@@ -270,6 +270,7 @@ function initMaps() {
   C.route = L.layerGroup().addTo(cmap);
   C.pins = L.layerGroup().addTo(cmap);
   C.me = L.marker([0, 0], { icon: meIcon(false), interactive: false, keyboard: false, zIndexOffset: 1000 });
+  cmap.on('click', onMapTap);                // pick a place by tapping the map (T1-S12)
   cmap.fitBounds(campusBounds(), { padding: [10, 10] });
   syncLabels();
 
@@ -279,6 +280,7 @@ function initMaps() {
   C.froute = L.layerGroup().addTo(fmap);
   C.fme = L.marker([0, 0], { icon: meIcon(false), interactive: false, keyboard: false, zIndexOffset: 1000 });
   fmap.on('zoomend', () => { document.body.classList.toggle('fz-near', fmap.getZoom() >= 2.4); });
+  fmap.on('click', onFloorTap);
 }
 function campusBounds() {
   const pts = PLACES.filter((p) => p.kind === 'building' && p.c).map((p) => p.c);
@@ -332,6 +334,7 @@ function fitFloor(fl) {
 const SCREENS = ['home', 'list', 'place', 'preview', 'loading', 'nav', 'welcome', 'calib'];
 function show(name) {
   TestLog.event('screen', { name });
+  S.screen = name;
   for (const s of SCREENS) $(`#${s}`).hidden = s !== name;
   if (name !== 'nav') { $('#arrived').hidden = true; }
   $('#dim').hidden = true;
@@ -443,7 +446,7 @@ function openPlace(p) {
   $('#place-thumb').innerHTML = thumbSVG(p);
   const b = buildingOf(p);
   const note = $('#place-note');
-  note.hidden = p.kind === 'building' || p.mapped;
+  note.hidden = p.kind === 'building' || p.kind === 'pin' || p.mapped;
   note.textContent = 'อาคารนี้ยังไม่มีแผนผังภายใน เส้นทางจะพาไปถึงทางเข้าอาคาร แล้วบอกชั้นของห้อง';
   $('#place-btns').hidden = false; $('#btn-finish').hidden = true; $('#place-close').hidden = false;
   $('#btn-layers').hidden = !(p.kind === 'room' && p.mapped);
@@ -458,7 +461,39 @@ function openPlace(p) {
   }
   placeMe();
 }
+// ---------- pick a place by tapping the map (T1-S12)
+// Testers wanted to tap the map, as in Google Maps, instead of only searching. web-0.3.1's map ignored taps. Now a tap on a
+// building opens it; a tap anywhere else drops a pin that can be routed to (the campus path nearest the pin, then straight to it);
+// on a floor plan, a tap on a room opens that room.
+let POLY_PLACE = null;                     // campus footprint → its building in the directory
+function placeOfPoly(f) {
+  if (!POLY_PLACE) {
+    POLY_PLACE = new Map();
+    for (const p of PLACES) if (p.kind === 'building' && p.c) { const q = polyOf(p); if (q && !POLY_PLACE.has(q)) POLY_PLACE.set(q, p); }
+  }
+  return POLY_PLACE.get(f) || null;
+}
+const tapsOn = () => (S.screen === 'home' || S.screen === 'place') && $('#arrived').hidden;
+function onMapTap(e) {
+  if (!tapsOn()) return;
+  const ll = [e.latlng.lat, e.latlng.lng];
+  const f = CAMPUS.buildings.find((x) => inPoly(ll, x.poly)), p = f && placeOfPoly(f);
+  if (p) { TestLog.event('map_tap', { what: 'building', id: p.id }); pushRecent(p); openPlace(p); return; }
+  const near = PLACES.filter((x) => x.kind === 'building' && x.c).reduce((b, x) => (!b || dLL(x.c, ll) < dLL(b.c, ll) ? x : b), null);
+  TestLog.event('map_tap', { what: 'pin', near: near ? near.code : null });
+  openPlace({ id: 'pin', kind: 'pin', code: 'หมุดที่ปักไว้', th: near ? `ใกล้ ${near.code} ${short(near.th, 26)}` : 'ตำแหน่งบนแผนที่',
+              c: ll, entrance: ll, entrance_node: nearestNode(ll), aliases: [] });
+}
+function onFloorTap(e) {                   // a room on the floor plan
+  if (!tapsOn() || !S.viewFloor) return;
+  const x = e.latlng.lng, y = e.latlng.lat, F = N7.floors[S.viewFloor];
+  const b = F && F.boxes.find((q) => x >= q.box[0] && x <= q.box[2] && y >= q.box[1] && y <= q.box[3] && BYID[q.code]);
+  if (!b) return;
+  TestLog.event('map_tap', { what: 'room', id: b.code });
+  pushRecent(BYID[b.code]); openPlace(BYID[b.code]); if (BYID[b.code].mapped) toggleLayers();
+}
 function highlightBuilding(b) {
+  if (b.kind === 'pin') return;
   const poly = polyOf(b);
   if (poly) L.polygon(poly.poly,{ color: '#fb8c3a', weight: 1.5, fillColor: '#fde3cc', fillOpacity: 1, interactive: false }).addTo(C.hl);
 }
@@ -490,6 +525,10 @@ function thumbSVG(p) {
   const P = (ll) => { const q = xy(ll), o = xy(b.c); return [q[0] - o[0], -(q[1] - o[1])]; };
   let s = '<svg viewBox="-90 -55 180 110" preserveAspectRatio="xMidYMid slice" role="img" aria-label="ตำแหน่งอาคาร">';
   s += '<rect x="-90" y="-55" width="180" height="110" fill="#eeeeec"/>';
+  if (p.kind === 'pin') {                  // a dropped pin: the buildings around it, and the pin
+    for (const x of near) s += `<polygon points="${x.poly.map(P).map((q) => q.join(',')).join(' ')}" fill="#e0ddd7" stroke="#cbc6be" stroke-width="0.6"/>`;
+    return s + '<circle cx="0" cy="0" r="4" fill="#fb8c3a" stroke="#fff" stroke-width="1.5"/></svg>';
+  }
   const hit = near.reduce((best, x) => (dLL(x.c, b.c) < best.d ? { d: dLL(x.c, b.c), x } : best), { d: Infinity, x: null }).x;
   for (const x of near) {
     const pts = x.poly.map(P).map((q) => q.join(',')).join(' ');
@@ -579,7 +618,7 @@ function indoorChain(fl, A, target) {      // from anchor A on floor fl to a roo
   segs.push(floorLeg(fl, A, target.exit ? entranceAnchor(fd) : nearestDoor(fd, target.code, A.x)));
   return segs.filter((s, i, all) => s.type !== 'in' || s.len > 0.3 || i === all.length - 1);   // e.g. starting at the lift: no empty first leg
 }
-function outdoorSeg(fromLL, fromNode, toNode, kind) {   // campus paths from a point (or a graph node) to an entrance node
+function outdoorSeg(fromLL, fromNode, toNode, kind, toLL) {   // campus paths from a point (or a graph node) to an entrance node (and on to toLL)
   const sn = fromNode != null ? fromNode : nearestNode(fromLL);
   let path = astar(sn, toNode);
   if (path && kind === 'shade' && path.length > 2) {
@@ -598,6 +637,7 @@ function outdoorSeg(fromLL, fromNode, toNode, kind) {   // campus paths from a p
   if (!path) return null;
   let pts = path.map((i) => G.nodes[i]);
   if (fromLL && dLL(fromLL, pts[0]) > 2) pts = [fromLL, ...pts];
+  if (toLL && dLL(toLL, pts[pts.length - 1]) > 2) pts = [...pts, toLL];   // a dropped pin: the last bit off the path, straight to it
   const line = mkLine(pts, dLL);
   return { type: 'out', ...line, steps: line.len > 3 ? legSteps(legsOf(pts.map(xy), 35, 8), null) : [] };
 }
@@ -619,7 +659,7 @@ function planRoute(dest, kind) {
       : { ...liftAnchor(fl), start: true };   // inside, floor known: start at that floor's lift lobby
     if (destIn) segs.push(...indoorChain(fl, A, { floor: dest.floor, code: dest.id }));
     else if (b !== n7) {                   // to another building: down to the entrance, then outdoors
-      const out = outdoorSeg(n7.entrance, n7.entrance_node, b.entrance_node, kind); if (!out) return null;
+      const out = outdoorSeg(n7.entrance, n7.entrance_node, b.entrance_node, kind, dest.kind === 'pin' ? dest.c : null); if (!out) return null;
       if (entry) segs.push(...indoorChain(fl, A, { exit: true }));   // without a plan of the entrance floor: from the entrance, as before
       segs.push(out);
     } else {                               // N7 itself, or a room in N7 without a plan: nothing to walk
@@ -627,7 +667,7 @@ function planRoute(dest, kind) {
       segs.push({ type: 'in', floor: fl, ...mkLine([[A.x, N7.floors[fl].corridor.y]], dXY), from: A, to: A, steps: [{ icon: 'arrive', ...st, len: 0, s0: 0, s1: 0 }] });
     }
   } else {
-    const out = outdoorSeg(o.ll, o.node, b.entrance_node, kind); if (!out) return null;
+    const out = outdoorSeg(o.ll, o.node, b.entrance_node, kind, dest.kind === 'pin' ? dest.c : null); if (!out) return null;
     if (destIn) {
       if (out.len > 3) segs.push(out);
       if (entry) segs.push(...indoorChain(EF(), entry, { floor: dest.floor, code: dest.id }));   // in at the entrance floor, then the lift
@@ -640,8 +680,8 @@ function planRoute(dest, kind) {
     const end = { len: 0, s0: s.len, s1: s.len };
     if (segs[i + 1]) s.steps = [...s.steps, { icon: 'enter', title: `เข้าอาคาร ${n7.code}`, sub: n7.entrance_checked ? '' : 'ทางเข้าโดยประมาณ', ...end }];
     else s.steps = [...s.steps, { icon: 'arrive', ...end,
-      title: dest.kind === 'building' ? `ถึง ${b.code}` : `ถึงอาคาร ${b.code} แล้วขึ้นไปชั้น ${dest.floor}`,
-      sub: dest.kind === 'building' ? b.th : `ห้องอยู่ชั้น ${dest.floor} · ยังไม่มีแผนผังภายในอาคารนี้` }];
+      title: dest.kind === 'building' ? `ถึง ${b.code}` : dest.kind === 'pin' ? 'ถึงหมุดที่ปักไว้' : `ถึงอาคาร ${b.code} แล้วขึ้นไปชั้น ${dest.floor}`,
+      sub: dest.kind === 'building' || dest.kind === 'pin' ? b.th : `ห้องอยู่ชั้น ${dest.floor} · ยังไม่มีแผนผังภายในอาคารนี้` }];
   });
   const r = { dest, kind, originLabel: o.label, segs, out: segs.find((s) => s.type === 'out') || null, startFloor: o.inN7 ? o.inN7.floor : null };
   flatSteps(r);
