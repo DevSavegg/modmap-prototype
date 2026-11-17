@@ -20,17 +20,17 @@
   <!-- HOME -->
   <section id="home" class="layer">
     <button id="searchbar" class="searchbar" aria-label="ค้นหา">
-      <span class="ico-search"></span><span class="ph">ค้นหาสถานที่ อาคาร หรือห้อง...</span>
+      <img src="icons/search.svg" alt="" class="ico-search"><span class="ph">ค้นหาสถานที่ อาคาร หรือห้อง...</span>
     </button>
     <div class="chips" id="chips">
-      <button data-cat="N"><span class="ico-bldg"></span>ตึก N</button>
-      <button data-cat="S"><span class="ico-bldg"></span>ตึก S</button>
-      <button data-cat="food"><span class="ico-food"></span>โรงอาหาร</button>
-      <button data-cat="dorm"><span class="ico-bldg"></span>หอพัก</button>
+      <button data-cat="N"><img src="icons/chip-building.svg" alt="" class="chip-ic">ตึก N</button>
+      <button data-cat="S"><img src="icons/chip-building.svg" alt="" class="chip-ic">ตึก S</button>
+      <button data-cat="food"><img src="icons/chip-food.svg" alt="" class="chip-ic food">โรงอาหาร</button>
+      <button data-cat="dorm"><img src="icons/chip-building.svg" alt="" class="chip-ic">หอพัก</button>
     </div>
     <button id="btn-help" class="fab fab-help" aria-label="สถานการณ์ทดสอบ">?</button>
-    <button id="btn-locate" class="fab fab-locate" aria-label="ตำแหน่งของฉัน"><span class="you-dot sm"></span></button>
-    <button id="btn-go" class="fab fab-go" aria-label="เริ่มนำทาง"><img src="icons/nav-arrow.svg" alt="" class="go-arrow"></button>
+    <button id="btn-locate" class="fab fab-locate" aria-label="ตำแหน่งของฉัน"><span class="halo"><i></i></span></button>
+    <button id="btn-go" class="fab fab-go" aria-label="เริ่มนำทาง"><img src="icons/go-arrow.svg" alt="" class="go-arrow"></button>
   </section>
 
   <!-- SEARCH / CATEGORY / PICKER (one full-screen list page) -->
@@ -45,7 +45,7 @@
       <button class="swap" id="pick-swap" aria-label="สลับต้นทางและปลายทาง">⇅</button>
     </div>
     <div id="listhead" class="searchbar static">
-      <button class="back" id="list-back" aria-label="กลับ">←</button>
+      <button class="back" id="list-back" aria-label="กลับ"><img src="icons/back.svg" alt=""></button>
       <input id="q" placeholder="ค้นหาสถานที่ อาคาร หรือห้อง..." autocomplete="off" enterkeyhint="search">
       <button id="q-clear" class="clear" aria-label="ล้าง"><img src="icons/search-clear.svg" alt=""></button>
     </div>
@@ -55,7 +55,7 @@
 
   <!-- PLACE SHEET -->
   <section id="place" class="layer" hidden>
-    <button class="searchbar" id="place-bar"><span class="ico-search"></span><span class="ph" id="place-q"></span><img src="icons/search-x.svg" alt="" class="x30" id="place-x"></button>
+    <button class="searchbar" id="place-bar"><img src="icons/search.svg" alt="" class="ico-search"><span class="ph" id="place-q"></span><img src="icons/search-x.svg" alt="" class="x30" id="place-x"></button>
     <button id="btn-layers" class="layersbtn" aria-label="สลับแผนที่และแผนผังชั้น" hidden><img src="icons/layers-bg.svg" alt="" class="lbg"><img src="icons/layers.svg" alt="" class="lic"></button>
     <div class="sheet" id="place-sheet">
       <button class="sheet-close" id="place-close" aria-label="ปิด"><img src="icons/sheet-close.svg" alt=""></button>

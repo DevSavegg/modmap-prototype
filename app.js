@@ -219,13 +219,19 @@ function subOf(p, long) {
 function buildingOf(p) { return p.kind === 'building' || p.kind === 'pin' ? p : BYID[p.building]; }   // a dropped pin is its own "building"
 
 const RECENT_KEY = 'mm_recent';
+const RECENT_LABEL_KEY = 'mm_recent_label';   // id → the name the user picked it by ("LX" for N16), shown in the recents list (Figma F07)
 function recents() {
   const ids = store.get(RECENT_KEY, null) || ['N7-607', 'N16', 'code:CB2405', 'S13'];
   return ids.map((id) => BYID[id] || (id.startsWith('code:') ? codePlace(parseCode(id.slice(5))) : null)).filter(Boolean);
 }
-function pushRecent(p) {
+const recentLabel = (id) => (store.get(RECENT_LABEL_KEY, null) || { N16: 'LX' })[id] || null;
+function pushRecent(p, hit) {
   const ids = [p.id, ...recents().map((x) => x.id).filter((id) => id !== p.id)].slice(0, 8);
   store.set(RECENT_KEY, ids);
+  const labels = store.get(RECENT_LABEL_KEY, null) || { N16: 'LX' }, keep = {};
+  if (hit) labels[p.id] = hit; else delete labels[p.id];
+  for (const id of ids) if (labels[id]) keep[id] = labels[id];
+  store.set(RECENT_LABEL_KEY, keep);
 }
 
 // ---------- state
@@ -370,7 +376,7 @@ function openList(mode, opts = {}) {
     q.value = opts.label; $('#q-clear').hidden = false;
     const list = PLACES.filter((p) => p.kind === 'building' && p.cats.includes(opts.cat))
       .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
-    renderResults(list.map((p) => ({ p })), 'pin');
+    renderResults(recentFirst(list.map((p) => ({ p }))), 'pin');
     return;
   }
   if (mode === 'pick') {
@@ -388,23 +394,30 @@ function openList(mode, opts = {}) {
 function renderSearch() {
   const v = $('#q').value.trim();
   $('#q-clear').hidden = !v;
-  if (!v) { $('#listtitle').hidden = false; $('#listtitle').textContent = 'ล่าสุด'; renderResults(recents().map((p) => ({ p })), 'clock'); return; }
+  if (!v) { $('#listtitle').hidden = false; $('#listtitle').textContent = 'ล่าสุด'; renderResults(recentRows(), 'clock'); return; }
   $('#listtitle').hidden = true;
-  renderResults(search(v), 'pin');
+  renderResults(recentFirst(search(v)), 'pin');
 }
 function renderPick() {
   const field = S.pickField === 'from' ? $('#pick-from') : $('#pick-to');
   const v = field.value.trim();
   if (!v) {
     $('#listtitle').hidden = false; $('#listtitle').textContent = 'ล่าสุด';
-    const rows = recents().map((p) => ({ p }));
+    const rows = recentRows();
     if (S.pickField === 'from') rows.unshift({ me: true });
     renderResults(rows, 'clock');
-  } else { $('#listtitle').hidden = true; renderResults(search(v), 'pin'); }
+  } else { $('#listtitle').hidden = true; renderResults(recentFirst(search(v)), 'pin'); }
 }
-const ICO = {
-  pin: '<svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z" fill="none" stroke="#fb8c3a" stroke-width="1.8"/></svg>',
-  clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#fb8c3a" stroke-width="1.8"/><path d="M12 7v5l3 2" fill="none" stroke="#fb8c3a" stroke-width="1.8" stroke-linecap="round"/></svg>',
+// the recents list (Figma F07): each place under the name it was picked by; buildings by their name alone, without a second line
+const recentRows = () => recents().map((p) => ({ p, hit: recentLabel(p.id), recent: true, bare: p.kind === 'building' }));
+function recentFirst(rows) {               // places the user opened before come first in a result list, with the clock icon (Figma F04, F16)
+  const ids = recents().map((p) => p.id), at = (r) => (r.p ? ids.indexOf(r.p.id) : -1);
+  const rec = rows.filter((r) => at(r) >= 0).sort((a, b) => at(a) - at(b)).map((r) => ({ ...r, recent: true }));
+  return [...rec, ...rows.filter((r) => at(r) < 0)];
+}
+const ICO = {                              // Material location_on and schedule outlines, #e65100, 25 px (Figma)
+  pin: '<img src="icons/location-on.svg" alt="">',
+  clock: '<img src="icons/schedule.svg" alt="">',
   me: '<span class="you-dot"></span>',
 };
 function renderResults(rows, icon) {
@@ -417,18 +430,18 @@ function renderResults(rows, icon) {
       b.addEventListener('click', () => { S.origin = { type: 'me' }; $('#pick-from').value = ''; S.pickField = 'to'; $('#pick-to').focus(); renderPick(); });
     } else {
       const p = r.p, t = titleOf(p, r.hit);
-      const sub = p.kind === 'building' ? (t !== p.code ? `${p.code} · ${p.th}` : p.th) : subOf(p);
+      const sub = r.bare ? '' : p.kind === 'building' ? (t !== p.code ? `${p.code} · ${p.th}` : p.th) : subOf(p);
       const tag = p.kind === 'coderoom' || (p.kind === 'room' && !p.mapped) ? '<span class="tag">ยังไม่มีแผนผังชั้น</span>' : '';
-      b.innerHTML = `<span class="ic">${ICO[icon]}</span><span><div class="t">${esc(t)}${tag}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ''}</span>`;
-      b.addEventListener('click', () => choose(p));
+      b.innerHTML = `<span class="ic">${ICO[r.recent ? 'clock' : icon]}</span><span><div class="t">${esc(t)}${tag}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ''}</span>`;
+      b.addEventListener('click', () => choose(p, r.hit));
     }
     li.appendChild(b); ul.appendChild(li);
   }
 }
-function choose(p) {
+function choose(p, hit) {
   const typed = S.listMode === 'pick' ? (S.pickField === 'from' ? $('#pick-from').value : $('#pick-to').value) : $('#q').value;
   TestLog.event('choose', { list: S.listMode, typed: String(typed || '').slice(0, 60), picked: p.id });
-  pushRecent(p);
+  pushRecent(p, hit);
   if (S.listMode === 'pick') {
     if (S.pickField === 'from') { S.origin = { type: 'place', p }; $('#pick-from').value = titleOf(p); S.pickField = 'to'; $('#pick-to').focus(); renderPick(); return; }
     S.place = p; openPreview(); return;
@@ -1706,7 +1719,7 @@ function wire() {
   $('#list-back').addEventListener('click', goHome);
   $('#pick-back').addEventListener('click', goHome);
   $('#q').addEventListener('input', () => { if (S.listMode === 'category') S.listMode = 'search'; renderSearch(); });
-  $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const r = search($('#q').value); if (r[0]) choose(r[0].p); } });
+  $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const r = recentFirst(search($('#q').value)); if (r[0]) choose(r[0].p, r[0].hit); } });   // the top row shown
   $('#q-clear').addEventListener('click', () => { $('#q').value = ''; S.listMode = 'search'; renderSearch(); $('#q').focus(); });
   $('#pick-from').addEventListener('focus', () => { S.pickField = 'from'; renderPick(); });
   $('#pick-to').addEventListener('focus', () => { S.pickField = 'to'; renderPick(); });
