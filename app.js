@@ -922,6 +922,7 @@ function stopNav() {
   if (NAV.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(NAV.watch);
   NAV.watch = null;
   $('#arrivecard').hidden = true; $('#atdoor').hidden = true; $('#trackbadge').hidden = true; $('#liftcard').hidden = true;
+  if (CAM.stream) closeCamera();
   if (!CAL.on) Motion.stop();
 }
 function advance(ds) {                       // simulation: walk ds metres along the current segment
@@ -1216,7 +1217,53 @@ function dlgLost(failed, why) {
   dialog({ ico: LOST_ICO, title: failed ? 'ไม่สามารถจับรูปถ่ายได้' : 'สัญญาณ GPS ขัดข้อง',
     text: why || 'กรุณาถ่ายรูปป้ายหน้าห้องที่ใกล้ที่สุดเพื่อทำการแทรกสัญญาณอีกครั้ง',
     extra: [S.mode === 'sim' ? linkBtn('ไม่ได้อยู่ที่ N7? ใช้รูปป้ายตัวอย่าง', sampleSign) : null, linkBtn('พิมพ์เลขห้องแทน', typeRoom)],
-    buttons: [{ t: 'ยกเลิก', ghost: true, on: cancelLost }, { t: failed ? 'ลองอีกครั้ง' : 'เปิดกล้อง', on: () => { $('#cam').value = ''; $('#cam').click(); } }] });
+    buttons: [{ t: 'ยกเลิก', ghost: true, on: cancelLost }, { t: failed ? 'ลองอีกครั้ง' : 'เปิดกล้อง', on: openCamera }] });
+}
+// ---- the camera inside the page (T1-S11)
+// web-0.3.1's "เปิดกล้อง" opened the phone's own camera app (a file input), so testers left the page, thought it had crashed,
+// and didn't know what to photograph. Now the camera shows inside the page, with a frame to aim at and a hint; only the part
+// in (and just around) the frame is read. The file input stays as the fallback (no camera access, or an in-app browser).
+const CAM = { stream: null };
+async function openCamera() {
+  closeDialog();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { TestLog.event('camera', { inpage: false, why: 'no getUserMedia' }); pickPhoto(); return; }
+  try {
+    CAM.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  } catch (e) {
+    TestLog.event('camera', { inpage: false, why: e && e.name });
+    toast('เปิดกล้องในหน้านี้ไม่ได้ จะใช้กล้องของโทรศัพท์แทน', 3500);
+    pickPhoto(); return;
+  }
+  const v = $('#cam-video'); v.srcObject = CAM.stream; $('#camview').hidden = false;
+  try { await v.play(); } catch { /* autoplay muted video normally plays */ }
+  TestLog.event('camera', { inpage: true });
+}
+function closeCamera() {
+  if (CAM.stream) CAM.stream.getTracks().forEach((t) => t.stop());
+  CAM.stream = null; $('#cam-video').srcObject = null; $('#camview').hidden = true;
+}
+function pickPhoto() { $('#cam').value = ''; $('#cam').click(); }
+function keepPhoto(src, w, h) {            // a small copy of the sign photo, only with the tester's OK
+  if (!(TestLog.on() && TestLog.tester().photos)) return;
+  const k = Math.min(1, 800 / Math.max(w, h)), c = document.createElement('canvas');
+  c.width = Math.round(w * k); c.height = Math.round(h * k);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  TestLog.addPhoto(c.toDataURL('image/jpeg', 0.7), 'sign photo');
+}
+async function shoot() {
+  const v = $('#cam-video'), W = v.videoWidth, H = v.videoHeight;
+  if (!W || !H) return;
+  // read the band around the frame, across the whole visible width (a long room number may stick out of the frame's sides).
+  // Screen → video pixels: the video fills the screen with object-fit: cover.
+  const fr = $('#cam-frame').getBoundingClientRect(), vr = v.getBoundingClientRect();
+  const k = Math.max(vr.width / W, vr.height / H), ox = (vr.width - W * k) / 2, oy = (vr.height - H * k) / 2;
+  const vx = (sx) => Math.max(0, Math.min(W, (sx - vr.left - ox) / k)), vy = (sy) => Math.max(0, Math.min(H, (sy - vr.top - oy) / k));
+  const x = vx(vr.left), w = vx(vr.right) - x, y = vy(fr.top - 0.5 * fr.height), h = vy(fr.bottom + 0.5 * fr.height) - y;
+  const c = document.createElement('canvas'); c.width = Math.round(w); c.height = Math.round(h);
+  c.getContext('2d').drawImage(v, x, y, w, h, 0, 0, c.width, c.height);
+  closeCamera();
+  keepPhoto(c, c.width, c.height);
+  await readSign(c, c.width, c.height, c.toDataURL('image/jpeg', 0.85), 'camera');
 }
 function cancelLost() {
   closeDialog(); $('#dim').hidden = true;
@@ -1239,12 +1286,7 @@ async function onPhoto(file) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    if (TestLog.on() && TestLog.tester().photos) {                  // a small copy of the sign photo, only with the tester's OK
-      const k = Math.min(1, 800 / Math.max(img.naturalWidth, img.naturalHeight));
-      const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      TestLog.addPhoto(c.toDataURL('image/jpeg', 0.7), 'sign photo');
-    }
+    keepPhoto(img, img.naturalWidth, img.naturalHeight);
     await readSign(img, img.naturalWidth, img.naturalHeight, url, 'photo');
   } catch { dlgLost(true); }
 }
@@ -1594,6 +1636,9 @@ function wire() {
   Motion.onStep = onStep; Motion.onTurn = onTurn;
   $('#lostbtn').addEventListener('click', () => lose(false));
   $('#cam').addEventListener('change', (e) => onPhoto(e.target.files[0]));
+  $('#cam-shot').addEventListener('click', shoot);
+  $('#cam-x').addEventListener('click', () => { closeCamera(); TestLog.event('camera_close', {}); dlgLost(false); });
+  $('#cam-file').addEventListener('click', () => { closeCamera(); pickPhoto(); });
   $('#floorpill').addEventListener('click', () => {
     const m = $('#floormenu');
     if (!m.hidden) { m.hidden = true; return; }

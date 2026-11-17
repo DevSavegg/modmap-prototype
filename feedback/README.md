@@ -163,6 +163,25 @@ Each item gives what was reported, the cause found, the change made, and the bef
   - The numbers above use the 27.2 m route to SCL607. With the nearest door (T1-D1) the route is 15.2 m.
 
 #### T1-S11: sign photo
+- **Reported:**
+  - The camera opened at once with no explanation. Testers were startled and thought the app had frozen or crashed.
+  - They didn't know what or where to photograph.
+  - Suggestion: show the camera inside the page.
+- **Cause (web-0.3.1):** "เปิดกล้อง" (open camera) in the lost-position dialog opened the phone's own camera app through a file input. Testers left the page, and the only guidance was the dialog's one line.
+- **Change:**
+  - **In-page camera:** it shows a frame to aim at and the hint "ถ่ายป้ายเลขห้องที่อยู่ใกล้คุณที่สุด ให้เลขห้องอยู่ในกรอบ" (photograph the nearest room-number sign, with the number in the frame).
+    - An example line: "เช่น ป้าย SCL607 ที่ติดข้างประตูห้อง" (e.g. the SCL607 sign beside the door).
+    - Controls: a shutter button, ✕ back to the dialog, and "เลือกรูปจากเครื่องแทน" (pick a photo instead).
+  - **What gets read:** only a band around the frame, across the whole visible width, so a long room number isn't cut off.
+  - **Fallback:** if the page can't use the camera (no permission, or an in-app browser), it falls back to the phone's camera as before, with a short notice.
+  - **Logs:** `camera` records whether the in-page camera opened and why not; `camera_close` records the ✕. Sign readings from it are labelled `camera`.
+- **Check:** this is a flow, so the check is a description, not a number.
+  - Before: "เปิดกล้อง" leaves the page for the camera app.
+  - After: the page shows its own camera view.
+  - Desk test: with a simulated upright phone camera, the photo was cropped to the band, read as SCL604, and the app asked for confirmation.
+- **Limits:**
+  - Not yet tried on real phones. iPhone Safari needs `playsinline`, which is set. LINE and Facebook in-app browsers may refuse the camera and fall back.
+  - The dialog's own wording comes from the Figma design and is unchanged here.
 
 #### T1-S12: pick a place on the map
 

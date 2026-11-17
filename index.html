@@ -212,6 +212,20 @@
       <div class="dlg-btns" id="dlg-btns"></div>
     </div>
   </div>
+  <!-- IN-PAGE CAMERA for the sign photo (T1-S11): the file input stays as the fallback -->
+  <div class="camview" id="camview" hidden>
+    <video id="cam-video" playsinline muted autoplay></video>
+    <div class="cam-shade"><div class="cam-frame" id="cam-frame"></div></div>
+    <div class="cam-top">
+      <button class="cam-x" id="cam-x" aria-label="ปิดกล้อง">✕</button>
+      <p class="cam-hint">ถ่ายป้ายเลขห้องที่อยู่ใกล้คุณที่สุด<br>ให้เลขห้องอยู่ในกรอบ</p>
+    </div>
+    <div class="cam-bottom">
+      <p class="cam-eg">เช่น ป้าย <b>SCL607</b> ที่ติดข้างประตูห้อง</p>
+      <button class="cam-shot" id="cam-shot" aria-label="ถ่ายรูป"></button>
+      <button class="cam-file" id="cam-file">เลือกรูปจากเครื่องแทน</button>
+    </div>
+  </div>
   <input type="file" id="cam" accept="image/*" capture="environment" hidden>
   <div class="toast" id="toast" hidden></div>
 </div>

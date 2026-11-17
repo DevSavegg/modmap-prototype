@@ -231,6 +231,20 @@ input { font: inherit; }
 .dlg-extra { display: grid; gap: 8px; margin-top: 6px; }
 .dlg-extra input { height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; text-align: center; font-size: 15px; }
 .dlg-extra .btn { height: 42px; font-size: 15px; }
+/* in-page camera for the sign photo (T1-S11) */
+.camview { position: absolute; inset: 0; z-index: 900; background: #000; color: #fff; overflow: hidden; }
+.camview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam-shade { position: absolute; inset: 0; display: grid; place-items: center; }
+.cam-frame { width: 78%; aspect-ratio: 16 / 10; border: 3px solid var(--orange); border-radius: 14px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.45); }
+.cam-top { position: absolute; left: 0; right: 0; top: 0; padding: 16px 16px 0; text-align: center; }
+.cam-hint { margin: 44px 0 0; font-size: 17px; line-height: 1.45; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+.cam-x { position: absolute; left: 14px; top: 14px; width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; font-size: 18px; }
+.cam-bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 16px 22px; display: grid; justify-items: center; gap: 12px; }
+.cam-eg { margin: 0; font-size: 14px; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+.cam-eg b { color: var(--orange-soft); font-weight: 500; }
+.cam-shot { width: 72px; height: 72px; border-radius: 50%; background: #fff; border: 5px solid var(--orange); }
+.cam-shot:active { transform: scale(.94); }
+.cam-file { color: #fff; font-size: 13px; text-decoration: underline; opacity: .9; }
 .floorgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .floorgrid .btn { height: 40px; font-size: 14px; padding: 0; background: var(--field); color: #333; }
 .dlg-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
