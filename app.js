@@ -244,9 +244,13 @@ const S = {
 // ---------- maps
 let cmap, fmap;
 const C = {};
-const meIcon = (lost) => L.divIcon({ className: '', html: `<div class="me-marker${lost ? ' lost' : ''}"><b class="beam"></b><i></i></div>`, iconSize: [64, 64], iconAnchor: [32, 32] });
-const pinIcon = () => L.divIcon({ className: 'pin-marker', html: '<img src="icons/pin.svg" alt="">', iconSize: [32, 48], iconAnchor: [16, 46] });
-const pinLabel = (t) => L.divIcon({ className: 'pin-label', html: esc(t), iconSize: [140, 20], iconAnchor: [-20, 36] });
+// sizes from Figma: the "you" marker is 64 px on the home map, 90 while navigating ('nav'), 32 on the route preview ('sm');
+// the pin is 32 px wide on the campus map, 21 on the route preview and 26 on a floor plan
+const ME_D = { nav: 90, sm: 32 };
+const meIcon = (lost, size) => { const d = ME_D[size] || 64;
+  return L.divIcon({ className: '', html: `<div class="me-marker${lost ? ' lost' : ''}${size ? ` ${size}` : ''}"><b class="beam"></b><i></i></div>`, iconSize: [d, d], iconAnchor: [d / 2, d / 2] }); };
+const pinIcon = (w = 32) => L.divIcon({ className: 'pin-marker', html: '<img src="icons/pin.svg" alt="">', iconSize: [w, w * 1.5], iconAnchor: [w / 2, w * 1.44] });
+const pinLabel = (t, plan) => L.divIcon({ className: `pin-label${plan ? ' plan' : ''}`, html: esc(t), iconSize: [160, plan ? 30 : 24], iconAnchor: plan ? [-16, 34] : [-26, 40] });
 
 function initMaps() {
   cmap = L.map('cmap', { zoomControl: false, minZoom: 15, maxZoom: 20, zoomSnap: 0.25, attributionControl: true });
@@ -774,11 +778,13 @@ function renderPreview() {
   showMap('campus');
   highlightBuilding(buildingOf(S.place));
   const other = planRoute(S.place, shade ? 'fast' : 'shade');
-  if (other && other.out) L.polyline(other.out.pts, { color: '#f5b26f', weight: 6, opacity: 0.55, interactive: false }).addTo(C.route);
-  L.polyline(r.out.pts, { color: '#ffffff', weight: 10, opacity: 0.9, interactive: false }).addTo(C.route);
-  L.polyline(r.out.pts, { color: '#fb8c3a', weight: 6, interactive: false }).addTo(C.route);
-  L.marker(r.out.pts[r.out.pts.length - 1], { icon: pinIcon(), interactive: false }).addTo(C.pins);
-  C.me.setLatLng(r.out.pts[0]).addTo(cmap);
+  if (other && other.out) {                // the other route: pale #fff3c4 with #f2a262 edges (Figma F19)
+    L.polyline(other.out.pts, { color: '#f2a262', weight: 8, interactive: false }).addTo(C.route);
+    L.polyline(other.out.pts, { color: '#fff3c4', weight: 6, interactive: false }).addTo(C.route);
+  }
+  L.polyline(r.out.pts, { color: '#f57c00', weight: 7, interactive: false }).addTo(C.route);
+  L.marker(r.out.pts[r.out.pts.length - 1], { icon: pinIcon(21), interactive: false }).addTo(C.pins);
+  C.me.setIcon(meIcon(false, 'sm')); C.me.setLatLng(r.out.pts[0]).addTo(cmap);
   cmap.fitBounds(L.latLngBounds(r.out.pts).pad(0.25), { paddingTopLeft: [20, 170], paddingBottomRight: [20, 300], animate: false });
 }
 function stepList(ul, steps, cur) {
@@ -791,9 +797,10 @@ function stepList(ul, steps, cur) {
     ul.appendChild(li);
   });
 }
-const STEP_ICON = { straight: 'step-straight', left: 'turn-left', right: 'turn-right', uturn: 'step-uturn', lift: 'step-lift', stairs: 'step-stairs', enter: 'pin', exit: 'pin', arrive: 'pin' };
+const STEP_ICON = { straight: 'step-straight', left: 'turn-left', right: 'turn-right', uturn: 'step-uturn', lift: 'step-lift', stairs: 'step-stairs', enter: 'location-on', exit: 'location-on', arrive: 'location-on' };
 function stepIcon(icon) {
-  return `<img src="icons/${STEP_ICON[icon] || 'step-straight'}.svg" alt="" class="${icon === 'straight' ? 'rot' : ''}">`;
+  const f = STEP_ICON[icon] || 'step-straight';
+  return `<img src="icons/${f}.svg" alt="" class="${icon === 'straight' ? 'rot' : f === 'location-on' ? 'loc' : ''}">`;
 }
 
 // ---------- navigation

@@ -36,13 +36,13 @@
   <!-- SEARCH / CATEGORY / PICKER (one full-screen list page) -->
   <section id="list" class="page" hidden>
     <div id="pickhead" class="pickhead" hidden>
-      <button class="back" id="pick-back" aria-label="กลับ">←</button>
+      <button class="back" id="pick-back" aria-label="กลับ"><img src="icons/back.svg" alt=""></button>
       <div class="pickfields">
-        <div class="pickrow"><span class="you-dot sm"></span><input id="pick-from" placeholder="ตำแหน่งของคุณ" autocomplete="off"></div>
+        <div class="pickrow"><span class="ico"><span class="you-dot"></span></span><input id="pick-from" placeholder="ตำแหน่งของคุณ" autocomplete="off"></div>
         <div class="dots"><i></i><i></i><i></i></div>
-        <div class="pickrow"><img src="icons/pin.svg" alt="" class="pin-sm"><input id="pick-to" placeholder="เลือกจุดหมาย" autocomplete="off"></div>
+        <div class="pickrow"><span class="ico"><img src="icons/location-on.svg" alt=""></span><input id="pick-to" placeholder="เลือกจุดหมาย" autocomplete="off"></div>
       </div>
-      <button class="swap" id="pick-swap" aria-label="สลับต้นทางและปลายทาง">⇅</button>
+      <button class="swap" id="pick-swap" aria-label="สลับต้นทางและปลายทาง"><img src="icons/swap.svg" alt=""></button>
     </div>
     <div id="listhead" class="searchbar static">
       <button class="back" id="list-back" aria-label="กลับ"><img src="icons/back.svg" alt=""></button>
@@ -74,14 +74,16 @@
   <!-- ROUTE PREVIEW -->
   <section id="preview" class="layer" hidden>
     <div class="odcard">
-      <div class="odrow"><span class="you-dot sm"></span><span id="pv-from">ตำแหน่งของคุณ</span></div>
+      <div class="odrow"><span class="ico"><span class="you-dot"></span></span><span id="pv-from">ตำแหน่งของคุณ</span></div>
       <div class="dots"><i></i><i></i><i></i></div>
-      <div class="odrow"><img src="icons/pin.svg" alt="" class="pin-sm"><span id="pv-to"></span></div>
-      <button class="swap" id="pv-back" aria-label="กลับ">✕</button>
+      <div class="odrow"><span class="ico"><img src="icons/location-on.svg" alt=""></span><span id="pv-to"></span></div>
+      <i class="rule"></i>
+      <button class="swap" id="pv-back" aria-label="กลับ"><img src="icons/search-x.svg" alt=""></button>
     </div>
     <div class="modebtns">
-      <button id="mode-fast" class="modebtn on" aria-label="เส้นทางที่ไวที่สุด"><svg viewBox="0 0 32 32"><path d="M18 3 7 18h8l-2 11 12-16h-8z" fill="currentColor"/></svg></button>
-      <button id="mode-shade" class="modebtn" aria-label="เส้นทางหลบแดดหลบฝน (แนวคิด)"><svg viewBox="0 0 32 32"><circle cx="11" cy="11" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 2v3M11 17v3M2 11h3M17 11h3M4.6 4.6l2 2M15.4 15.4l2 2M4.6 17.4l2-2M15.4 4.6l2 2" stroke="currentColor" stroke-width="2"/><path d="M12 27h13a5 5 0 0 0 0-10 7 7 0 0 0-13 2 4 4 0 0 0 0 8z" fill="currentColor"/></svg></button>
+      <!-- Figma Group 49 (bolt with speed lines) and Group 48 (sun behind a cloud), drawn in currentColor -->
+      <button id="mode-fast" class="modebtn on" aria-label="เส้นทางที่ไวที่สุด"><svg viewBox="11 11 70 70" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M33.8444 42.6521C32.3106 42.6521 32.464 39.9739 33.8444 39.9739H39.9803C41.0541 39.9739 41.0539 42.6521 39.9803 42.6521H33.8444Z"/><path d="M32.5055 52.0261C30.9716 52.0261 31.1251 49.3478 32.5055 49.3478H38.6413C39.7152 49.3478 39.715 52.0261 38.6413 52.0261H32.5055Z"/><path d="M30.0407 61.4C28.2976 61.4 28.2975 58.7217 30.0407 58.7217H42.4177C43.8124 58.7217 43.8124 61.4 42.4177 61.4H30.0407Z"/><path d="M46.3028 46.207C46.7058 45.0287 57.9916 31.5619 58.529 30.8886C59.0664 30.2152 60.6786 30.7202 60.4099 32.4036C60.1412 34.0869 57.8572 43.8503 57.8572 43.8503C57.8572 43.8503 61.8878 43.682 63.3657 43.682C64.8436 43.682 65.2467 44.692 64.5749 45.702C63.9031 46.712 53.2891 60.0104 52.6174 61.0204C51.9457 62.0304 50.199 60.8521 50.6021 59.5054C51.0051 58.1587 54.2296 48.3953 54.2296 48.3953C54.2296 48.3953 47.6463 48.5637 46.9746 48.5637C46.3028 48.5637 45.8997 47.3853 46.3028 46.207Z"/><path d="M35.2851 33.2782C33.5584 33.2782 33.83 30.6 35.2851 30.6H50.2014C52.0206 30.6 51.8386 33.2782 50.2014 33.2782H35.2851Z"/></svg></button>
+      <button id="mode-shade" class="modebtn" aria-label="เส้นทางหลบแดดหลบฝน (แนวคิด)"><svg viewBox="11 11 70 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M61.5126 63.2667H34.2652C33.4395 63.2667 31.7881 61.7029 30.9625 60.921C30.1368 60.1391 29.3111 58.5753 29.3111 57.0115C29.3111 55.4477 29.3111 54.6658 30.1368 53.102C30.9625 51.5383 32.6138 49.1926 35.0908 49.1926H38.3936C39.2192 49.1926 39.2192 46.8469 41.6963 46.065C44.1733 45.2831 45.8247 45.2831 46.6504 46.065C47.476 46.8469 48.3017 43.7193 49.9531 42.9374C51.6044 42.1555 51.6044 42.1555 53.2558 42.1555C54.9071 42.1555 56.5585 42.1555 58.2099 43.7193C59.8612 45.2831 61.5126 46.8469 61.5126 48.4107C61.5126 49.9745 60.6869 51.5383 61.5126 51.5383C62.3383 51.5383 63.9896 52.3202 64.8153 53.102C65.641 53.8839 66.4666 55.4477 66.4666 56.2296C66.4666 57.0115 66.4666 60.1391 65.641 60.921C64.8153 61.7029 63.1639 63.2667 61.5126 63.2667Z" fill="currentColor" stroke-width="1"/><path d="M29.1004 46.8L26.5671 48.0666M28.757 41.4187L25.9334 41.6404M29.5825 36.3118L27.2003 34.7798M33.5613 32.8665L32.2671 30.3471M38.4917 30.6292L38.3594 27.8M43.1566 32.8618L44.4328 30.3333M47.581 36.8897L49.99 35.4"/><path d="M32.2671 45.5333C28.4671 40.4666 33.5339 35.3999 36.0671 34.7666C38.6002 34.1333 43.6669 33.5 45.5671 39.8333"/></svg></button>
     </div>
     <div class="sheet tall" id="pv-sheet">
       <div class="grab" id="pv-grab"></div>
@@ -90,7 +92,7 @@
       <p class="mock" id="pv-mock" hidden>ตัวอย่างแนวคิด: ยังไม่ได้ใช้ข้อมูลทางเดินมีหลังคาจริง</p>
       <div class="pvstats"><span id="pv-min"></span><span id="pv-dist"></span></div>
       <div class="steps" id="pv-steps" hidden><h3>ขั้นตอน</h3><ul id="pv-steplist"></ul></div>
-      <button class="btn primary wide" id="pv-start"><img src="icons/nav-arrow-white.svg" alt="">เริ่มนำทาง</button>
+      <div class="pvfoot"><button class="btn primary wide" id="pv-start"><img src="icons/nav-arrow-white.svg" alt="">เริ่มนำทาง</button></div>
     </div>
   </section>
 
